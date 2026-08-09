@@ -1,0 +1,14 @@
+services:
+  cineprofile:
+    build: .
+    container_name: cineprofile
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    environment:
+      TMDB_TOKEN: "${TMDB_TOKEN:-}"
+      CINEPROFILE_DB: "/app/data/cineprofile.db"
+      CINEPROFILE_REGION: "CH"
+      CINEPROFILE_LANGUAGE: "fr-FR"
+    volumes:
+      - ./data:/app/data

@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=75", "wheel>=0.44"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cineprofile"
+version = "0.11.0"
+description = "Profil cinématographique enrichi et moteur de recommandations à partir d'un export IMDb."
+requires-python = ">=3.11"
+dependencies = [
+  "fastembed>=0.8,<1",
+  "httpx>=0.27,<1",
+  "jinja2>=3.1,<4",
+  "pandas>=2.2,<3",
+  "plotly>=5.24,<7",
+  "python-dotenv>=1.0,<2",
+  "scikit-learn>=1.5,<2",
+  "scipy>=1.10,<2",
+  "streamlit>=1.38,<2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3,<9"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+include = ["cineprofile*"]
+exclude = ["data*", "tests*"]
