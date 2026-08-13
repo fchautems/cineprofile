@@ -16,6 +16,7 @@ class RadarrError(RuntimeError):
 class RadarrAddResult:
     movie_id: int | None
     already_present: bool
+    search_command_id: int | None
 
 
 class RadarrClient:
@@ -96,6 +97,25 @@ class RadarrClient:
             None,
         )
 
+    def _start_movie_search(self, movie_id: int) -> int | None:
+        try:
+            command = self._request(
+                "POST",
+                "/api/v3/command",
+                json={"name": "MoviesSearch", "movieIds": [int(movie_id)]},
+            )
+        except RadarrError as exc:
+            raise RadarrError(
+                "Le film est bien dans Radarr, mais sa recherche n’a pas pu "
+                f"être lancée : {exc}"
+            ) from exc
+        if not isinstance(command, dict):
+            raise RadarrError(
+                "Le film est bien dans Radarr, mais Radarr n’a pas confirmé "
+                "le lancement de sa recherche."
+            )
+        return int(command["id"]) if command.get("id") else None
+
     def add_movie(
         self,
         tmdb_id: int,
@@ -105,9 +125,15 @@ class RadarrClient:
     ) -> RadarrAddResult:
         existing = self._existing_movie(tmdb_id)
         if existing is not None:
+            if not existing.get("id"):
+                raise RadarrError(
+                    "Le film existe dans Radarr, mais son identifiant est absent."
+                )
+            movie_id = int(existing["id"])
             return RadarrAddResult(
-                movie_id=int(existing["id"]) if existing.get("id") else None,
+                movie_id=movie_id,
                 already_present=True,
+                search_command_id=self._start_movie_search(movie_id),
             )
 
         lookup = self._request(
@@ -135,7 +161,9 @@ class RadarrClient:
                 "rootFolderPath": str(root_folder_path),
                 "monitored": True,
                 "addOptions": {
-                    "searchForMovie": True,
+                    # La recherche est lancée explicitement après l’ajout. Cela
+                    # évite de dépendre du traitement implicite de cette option.
+                    "searchForMovie": False,
                     "monitor": "movieOnly",
                 },
             }
@@ -143,7 +171,13 @@ class RadarrClient:
         created = self._request("POST", "/api/v3/movie", json=payload)
         if not isinstance(created, dict):
             raise RadarrError("Radarr n’a pas confirmé l’ajout du film.")
+        if not created.get("id"):
+            raise RadarrError(
+                "Le film a été ajouté, mais Radarr n’a pas renvoyé son identifiant."
+            )
+        movie_id = int(created["id"])
         return RadarrAddResult(
-            movie_id=int(created["id"]) if created.get("id") else None,
+            movie_id=movie_id,
             already_present=False,
+            search_command_id=self._start_movie_search(movie_id),
         )

@@ -1,6 +1,6 @@
 # CineProfile
 
-Version actuelle : **0.12.1**. L’écran permanent **Mes films** rassemble les
+Version actuelle : **0.12.2**. L’écran permanent **Mes films** rassemble les
 statuts « À voir », « Pas intéressé », « Déjà vu » et **Downloaded**. Ils sont
 filtrables, modifiables et réversibles. CineProfile peut aussi envoyer un film
 à Radarr et conserver localement l’historique horodaté de chaque tentative.
@@ -17,6 +17,19 @@ réutilisables :
 
 Le CSV n’est donc pas le modèle : c’est l’historique initial. La base enrichie
 devient la mémoire durable de l’outil.
+
+## Correctif 0.12.2 — recherche Radarr explicite
+
+Après avoir ajouté ou retrouvé le film dans Radarr, CineProfile envoie
+maintenant une commande `MoviesSearch` dédiée avec l’identifiant interne du
+film. Le statut local **Downloaded** n’est enregistré que si Radarr accepte
+cette commande. En cas de refus, le message précise que le film est présent
+dans Radarr mais que sa recherche n’a pas pu être lancée ; un nouveau clic
+permet alors de retenter la recherche sans ajouter le film en double.
+
+Radarr choisit ensuite une version conforme aux indexeurs, au profil de qualité
+et au client de téléchargement configurés. Le lancement de la recherche ne
+garantit donc pas qu’une version compatible existe immédiatement.
 
 ## Correctif 0.12.1 — connexions persistantes
 

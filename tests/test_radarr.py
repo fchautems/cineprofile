@@ -12,7 +12,7 @@ from cineprofile.preferences import (
     record_radarr_download,
     remove_radarr_request,
 )
-from cineprofile.radarr import RadarrClient
+from cineprofile.radarr import RadarrClient, RadarrError
 from cineprofile.settings import (
     forget_radarr_connection_file,
     save_radarr_connection_file,
@@ -20,7 +20,8 @@ from cineprofile.settings import (
 
 
 def test_radarr_adds_movie_and_starts_search() -> None:
-    received: dict = {}
+    received_movie: dict = {}
+    received_command: dict = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers["X-Api-Key"] == "secret"
@@ -33,8 +34,14 @@ def test_radarr_adds_movie_and_starts_search() -> None:
                 json=[{"tmdbId": 123, "title": "Film test", "year": 2026}],
             )
         if request.url.path == "/api/v3/movie" and request.method == "POST":
-            received.update(json.loads(request.content))
+            received_movie.update(json.loads(request.content))
             return httpx.Response(201, json={"id": 77, "tmdbId": 123})
+        if request.url.path == "/api/v3/command" and request.method == "POST":
+            received_command.update(json.loads(request.content))
+            return httpx.Response(
+                201,
+                json={"id": 501, "name": "MoviesSearch", "status": "queued"},
+            )
         raise AssertionError(f"Requête inattendue : {request.method} {request.url}")
 
     with RadarrClient(
@@ -49,23 +56,31 @@ def test_radarr_adds_movie_and_starts_search() -> None:
         )
 
     assert result.movie_id == 77
+    assert result.search_command_id == 501
     assert not result.already_present
-    assert received["tmdbId"] == 123
-    assert received["rootFolderPath"] == "/movies"
-    assert received["qualityProfileId"] == 4
-    assert received["monitored"] is True
-    assert received["addOptions"] == {
-        "searchForMovie": True,
+    assert received_movie["tmdbId"] == 123
+    assert received_movie["rootFolderPath"] == "/movies"
+    assert received_movie["qualityProfileId"] == 4
+    assert received_movie["monitored"] is True
+    assert received_movie["addOptions"] == {
+        "searchForMovie": False,
         "monitor": "movieOnly",
     }
+    assert received_command == {"name": "MoviesSearch", "movieIds": [77]}
 
 
 def test_radarr_existing_movie_is_not_added_twice() -> None:
     calls: list[tuple[str, str]] = []
+    received_command: dict = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append((request.method, request.url.path))
-        return httpx.Response(200, json=[{"id": 88, "tmdbId": 123}])
+        if request.url.path == "/api/v3/movie":
+            return httpx.Response(200, json=[{"id": 88, "tmdbId": 123}])
+        if request.url.path == "/api/v3/command":
+            received_command.update(json.loads(request.content))
+            return httpx.Response(201, json={"id": 502, "status": "queued"})
+        raise AssertionError(f"Requête inattendue : {request.method} {request.url}")
 
     with RadarrClient(
         "http://radarr.local:7878",
@@ -79,8 +94,45 @@ def test_radarr_existing_movie_is_not_added_twice() -> None:
         )
 
     assert result.movie_id == 88
+    assert result.search_command_id == 502
     assert result.already_present
-    assert calls == [("GET", "/api/v3/movie")]
+    assert calls == [
+        ("GET", "/api/v3/movie"),
+        ("POST", "/api/v3/command"),
+    ]
+    assert received_command == {"name": "MoviesSearch", "movieIds": [88]}
+
+
+def test_radarr_does_not_report_success_when_search_is_rejected() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v3/movie" and request.method == "GET":
+            return httpx.Response(200, json=[])
+        if request.url.path == "/api/v3/movie/lookup":
+            return httpx.Response(200, json=[{"tmdbId": 123, "title": "Film"}])
+        if request.url.path == "/api/v3/movie" and request.method == "POST":
+            return httpx.Response(201, json={"id": 77, "tmdbId": 123})
+        if request.url.path == "/api/v3/command":
+            return httpx.Response(400, text="No indexer available")
+        raise AssertionError(f"Requête inattendue : {request.method} {request.url}")
+
+    with RadarrClient(
+        "http://radarr.local:7878",
+        "secret",
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        try:
+            client.add_movie(
+                123,
+                root_folder_path="/movies",
+                quality_profile_id=4,
+            )
+        except RadarrError as exc:
+            message = str(exc)
+        else:
+            raise AssertionError("RadarrError attendu")
+
+    assert "film est bien dans Radarr" in message
+    assert "No indexer available" in message
 
 
 def test_radarr_request_status_is_persistent_and_separate(tmp_path: Path) -> None:
