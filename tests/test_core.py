@@ -71,7 +71,9 @@ from cineprofile.ranking import (
 )
 from cineprofile.settings import (
     forget_tmdb_token_file,
+    read_connection_settings,
     read_tmdb_token_file,
+    save_connection_settings,
     save_tmdb_token_file,
 )
 from cineprofile.tmdb import (
@@ -270,6 +272,8 @@ def test_streamlit_app_starts(tmp_path: Path, monkeypatch) -> None:
     app.run(timeout=15)
     assert not app.exception
     assert app.title[0].value == "CineProfile"
+    assert any(field.label == "Clé TMDB" for field in app.text_input)
+    assert any(button.label == "Enregistrer" for button in app.button)
 
 
 def test_streamlit_exposes_all_tabs_and_excludable_genres(
@@ -285,6 +289,10 @@ def test_streamlit_exposes_all_tabs_and_excludable_genres(
     app = AppTest.from_file(str(ROOT / "app.py")).run(timeout=15)
 
     assert not app.exception
+    assert not any(field.label == "Clé TMDB" for field in app.text_input)
+    assert any(
+        button.label == "Modifier les connexions" for button in app.button
+    )
     assert [tab.label for tab in app.tabs] == [
         "1 · Importer et enrichir",
         "2 · Comprendre le profil",
@@ -427,6 +435,48 @@ def test_tmdb_token_can_be_saved_and_forgotten_locally(tmp_path: Path) -> None:
 
     forget_tmdb_token_file(env_file)
     assert read_tmdb_token_file(env_file) == ""
+
+
+def test_connections_are_saved_together_without_overwriting_tmdb(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "# Réglage conservé\nCINEPROFILE_REGION=CH\n",
+        encoding="utf-8",
+    )
+
+    save_connection_settings(
+        env_file,
+        tmdb_token="tmdb-secret",
+        radarr_url="http://radarr.local:7878/",
+        radarr_api_key="radarr-secret",
+        radarr_root_folder="/movies",
+        radarr_quality_profile_id="4",
+    )
+    settings = read_connection_settings(env_file)
+
+    assert settings == {
+        "TMDB_TOKEN": "tmdb-secret",
+        "RADARR_URL": "http://radarr.local:7878",
+        "RADARR_API_KEY": "radarr-secret",
+        "RADARR_ROOT_FOLDER": "/movies",
+        "RADARR_QUALITY_PROFILE_ID": "4",
+    }
+    saved = env_file.read_text(encoding="utf-8")
+    assert "# Réglage conservé" in saved
+    assert "CINEPROFILE_REGION=CH" in saved
+
+
+def test_connection_storage_rejects_env_directory(tmp_path: Path) -> None:
+    env_directory = tmp_path / ".env"
+    env_directory.mkdir()
+
+    with pytest.raises(ValueError, match="actuellement un dossier"):
+        save_connection_settings(
+            env_directory,
+            tmdb_token="tmdb-secret",
+        )
 
 
 def test_affinity_index_is_stable_when_exploration_changes(tmp_path: Path) -> None:

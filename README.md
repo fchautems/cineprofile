@@ -1,6 +1,6 @@
 # CineProfile
 
-Version actuelle : **0.12.0**. L’écran permanent **Mes films** rassemble les
+Version actuelle : **0.12.1**. L’écran permanent **Mes films** rassemble les
 statuts « À voir », « Pas intéressé », « Déjà vu » et **Downloaded**. Ils sont
 filtrables, modifiables et réversibles. CineProfile peut aussi envoyer un film
 à Radarr et conserver localement l’historique horodaté de chaque tentative.
@@ -17,6 +17,19 @@ réutilisables :
 
 Le CSV n’est donc pas le modèle : c’est l’historique initial. La base enrichie
 devient la mémoire durable de l’outil.
+
+## Correctif 0.12.1 — connexions persistantes
+
+TMDB et Radarr se configurent maintenant ensemble dans un panneau compact
+**Connexions**. Un seul bouton enregistre atomiquement toutes les valeurs dans
+le fichier local `.env` : la configuration précédente reste intacte si la
+validation de Radarr ou l’écriture échoue. Une fois enregistrées, les clés ne
+restent plus affichées ; CineProfile indique simplement **TMDB configuré** et
+**Radarr connecté**, puis reconnecte automatiquement Radarr au lancement.
+
+Le dossier de films et le profil de qualité Radarr sont également mémorisés.
+Si `.env` est accidentellement un dossier au lieu d’un fichier, l’interface
+l’explique explicitement au lieu de tenter une écriture incohérente.
 
 ## Mise à jour 0.12.0 — Mes films et Radarr
 
@@ -473,9 +486,10 @@ après une interruption.
 Sans jeton TMDB, l’import et un premier profil fondé sur les colonnes IMDb
 restent disponibles.
 
-Le bouton **Mémoriser sur ce PC** enregistre volontairement le jeton dans le
-fichier local `.env`. Ce fichier est ignoré par Git et exclu des archives de
-mise à jour. Le bouton **Oublier** supprime le jeton enregistré.
+Le bouton **Enregistrer** du panneau **Connexions** mémorise TMDB et Radarr dans
+le fichier local `.env`. Ce fichier est ignoré par Git et exclu des archives de
+mise à jour. Les commandes **Oublier TMDB** et **Oublier Radarr** suppriment
+uniquement la connexion choisie.
 
 ## Données et limites
 

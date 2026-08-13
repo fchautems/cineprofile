@@ -113,8 +113,8 @@ def test_radarr_credentials_can_be_saved_and_forgotten(tmp_path: Path) -> None:
         "secret",
     )
     saved = env_file.read_text(encoding="utf-8")
-    assert "RADARR_URL='http://radarr.local:7878'" in saved
-    assert "RADARR_API_KEY='secret'" in saved
+    assert 'RADARR_URL="http://radarr.local:7878"' in saved
+    assert 'RADARR_API_KEY="secret"' in saved
 
     forget_radarr_connection_file(env_file)
     forgotten = env_file.read_text(encoding="utf-8")
