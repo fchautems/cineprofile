@@ -51,10 +51,17 @@ def render_import_tab(
                 clear_catalog_cache()
         result = st.session_state.get("import_result")
         if result:
-            st.success(
-                f"{result.imported_rows} nouveaux titres, "
-                f"{result.updated_rows} titres mis à jour, "
-                f"{result.skipped_rows} lignes ignorées."
+            st.success("Import IMDb terminé sans effacer les données existantes.")
+            import_metrics = st.columns(4)
+            import_metrics[0].metric("Nouveaux", result.imported_rows)
+            import_metrics[1].metric("Modifiés", result.updated_rows)
+            import_metrics[2].metric("Inchangés", result.unchanged_rows)
+            import_metrics[3].metric("Ignorés", result.skipped_rows)
+            st.caption(
+                "Conservés pendant l’import : "
+                f"{result.enriched_rows_preserved} enrichissement(s) TMDB · "
+                f"{result.feedback_rows_preserved} statut(s) de film · "
+                f"{result.preference_rows_preserved} correction(s) du profil."
             )
             st.caption("Colonnes détectées : " + ", ".join(result.columns))
 

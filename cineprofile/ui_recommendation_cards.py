@@ -6,7 +6,14 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from cineprofile.preferences import load_feedback, save_feedback
+from cineprofile.preferences import (
+    load_feedback,
+    load_radarr_requests,
+    record_radarr_attempt,
+    record_radarr_download,
+    save_feedback,
+)
+from cineprofile.radarr import RadarrClient
 
 
 def _remove_from_recommendation_state(tmdb_id: int) -> None:
@@ -34,9 +41,11 @@ def render_recommendation_cards(
     visible_count: int,
     *,
     view: str = "discovery",
+    radarr_config: dict | None = None,
 ) -> None:
     is_safe = view == "safe"
     feedback = load_feedback(database)
+    radarr_requests = load_radarr_requests(database)
     for item in visible[:visible_count]:
         with st.container(border=True):
             poster_col, title_col, score_col = st.columns([1.05, 4.5, 1.25])
@@ -215,7 +224,11 @@ def render_recommendation_cards(
                     }[existing_feedback["action"]]
                 )
 
-            action_columns = st.columns(3)
+            radarr_request = radarr_requests.get(int(item["tmdb_id"]))
+            if radarr_request:
+                score_col.success("Downloaded")
+
+            action_columns = st.columns(4)
             if action_columns[0].button(
                 "À voir",
                 key=f"watchlist_{view}_{item['tmdb_id']}",
@@ -239,6 +252,45 @@ def render_recommendation_cards(
                 save_feedback(item, "already_seen", database)
                 _remove_from_recommendation_state(int(item["tmdb_id"]))
                 st.rerun()
+            if action_columns[3].button(
+                "Downloaded" if radarr_request else "Download",
+                key=f"radarr_{view}_{item['tmdb_id']}",
+                width="stretch",
+                disabled=radarr_config is None or radarr_request is not None,
+                help=(
+                    "Connecte d’abord Radarr dans la barre latérale."
+                    if radarr_config is None
+                    else "Ajoute le film à Radarr et lance sa recherche."
+                ),
+            ):
+                try:
+                    with RadarrClient(
+                        radarr_config["url"],
+                        radarr_config["api_key"],
+                    ) as radarr_client:
+                        result = radarr_client.add_movie(
+                            int(item["tmdb_id"]),
+                            root_folder_path=radarr_config["root_folder_path"],
+                            quality_profile_id=int(
+                                radarr_config["quality_profile_id"]
+                            ),
+                        )
+                except Exception as exc:
+                    record_radarr_attempt(
+                        item,
+                        "failed",
+                        database,
+                        error_message=str(exc),
+                    )
+                    st.error(f"Envoi à Radarr échoué : {exc}")
+                else:
+                    record_radarr_download(
+                        item,
+                        result.movie_id,
+                        database,
+                        already_present=result.already_present,
+                    )
+                    st.rerun()
 
             if item.get("providers_ch"):
                 st.caption(

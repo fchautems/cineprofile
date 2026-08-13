@@ -43,7 +43,11 @@ class ImportResult:
     total_rows: int
     imported_rows: int
     updated_rows: int
+    unchanged_rows: int
     skipped_rows: int
+    enriched_rows_preserved: int
+    feedback_rows_preserved: int
+    preference_rows_preserved: int
     columns: tuple[str, ...]
 
 
@@ -226,24 +230,83 @@ def import_ratings(
 
     with transaction(database) as connection:
         imported_ids = set(normalized["imdb_id"])
-        existing = {
-            row["imdb_id"]
-            for row in connection.execute(
-                "SELECT imdb_id FROM titles"
+        compared_columns = [
+            "imdb_id",
+            "title",
+            "original_title",
+            "title_type",
+            "year",
+            "user_rating",
+            "date_rated",
+            "imdb_rating",
+            "num_votes",
+            "runtime_minutes",
+            "release_date",
+            "genres_csv",
+            "directors_csv",
+        ]
+        placeholders = ",".join("?" for _ in imported_ids)
+        existing_rows = (
+            connection.execute(
+                f"""
+                SELECT {', '.join(compared_columns)}, metadata_status
+                FROM titles
+                WHERE imdb_id IN ({placeholders})
+                """,
+                tuple(sorted(imported_ids)),
             ).fetchall()
-            if row["imdb_id"] in imported_ids
-        }
-        connection.executemany(
-            UPSERT,
-            normalized.where(pd.notna(normalized), None).to_dict(orient="records"),
+            if imported_ids
+            else []
         )
+        existing = {row["imdb_id"]: dict(row) for row in existing_rows}
+
+        changed_ids: set[str] = set()
+        for incoming in normalized.where(pd.notna(normalized), None).to_dict(
+            orient="records"
+        ):
+            current = existing.get(str(incoming["imdb_id"]))
+            if current is None:
+                continue
+            for column in compared_columns:
+                if column == "imdb_id":
+                    continue
+                incoming_value = incoming[column]
+                # The UPSERT intentionally preserves optional enriched IMDb
+                # values when a newer export leaves them blank.
+                effective_value = (
+                    current[column]
+                    if incoming_value is None and column != "user_rating"
+                    else incoming_value
+                )
+                if effective_value != current[column]:
+                    changed_ids.add(str(incoming["imdb_id"]))
+                    break
+
+        preserved_enrichments = sum(
+            row["metadata_status"] == "done" for row in existing_rows
+        )
+        preserved_feedback = connection.execute(
+            "SELECT COUNT(*) FROM recommendation_feedback"
+        ).fetchone()[0]
+        preserved_preferences = connection.execute(
+            "SELECT COUNT(*) FROM profile_preferences"
+        ).fetchone()[0]
+        records = normalized.where(pd.notna(normalized), None).to_dict(
+            orient="records"
+        )
+        connection.executemany(UPSERT, records)
 
     imported = len(normalized) - len(existing)
+    unchanged = len(existing) - len(changed_ids)
     return ImportResult(
         total_rows=len(raw),
         imported_rows=imported,
-        updated_rows=len(existing),
+        updated_rows=len(changed_ids),
+        unchanged_rows=unchanged,
         skipped_rows=len(raw) - len(normalized),
+        enriched_rows_preserved=int(preserved_enrichments),
+        feedback_rows_preserved=int(preserved_feedback),
+        preference_rows_preserved=int(preserved_preferences),
         columns=tuple(str(column) for column in raw.columns),
     )
 

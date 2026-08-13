@@ -29,6 +29,7 @@ def _render_recommendation_list(
     diagnostics: dict | None,
     diagnostic_download_payload: dict | None,
     diagnostic_download_name: str | None,
+    radarr_config: dict | None,
 ) -> None:
     is_safe = view == "safe"
     key_prefix = f"recommendation_{view}"
@@ -354,6 +355,7 @@ def _render_recommendation_list(
         visible,
         visible_count,
         view=view,
+        radarr_config=radarr_config,
     )
 
     if visible_count < len(visible):
@@ -374,6 +376,7 @@ def render_recommendations_tab(
     language: str,
     region: str,
     logger: logging.Logger,
+    radarr_config: dict | None = None,
 ) -> None:
     st.subheader("Tes prochaines découvertes")
     st.write(
@@ -749,6 +752,7 @@ def render_recommendations_tab(
                     diagnostics=diagnostics,
                     diagnostic_download_payload=diagnostic_download_payload,
                     diagnostic_download_name=diagnostic_download_name,
+                    radarr_config=radarr_config,
                 )
             with discovery_tab:
                 _render_recommendation_list(
@@ -761,4 +765,5 @@ def render_recommendations_tab(
                     diagnostics=diagnostics,
                     diagnostic_download_payload=diagnostic_download_payload,
                     diagnostic_download_name=diagnostic_download_name,
+                    radarr_config=radarr_config,
                 )

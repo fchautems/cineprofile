@@ -10,9 +10,7 @@ from cineprofile.preferences import (
     ADJUSTMENT_LABELS,
     LABEL_ADJUSTMENTS,
     clear_preferences,
-    load_feedback,
     load_preferences,
-    remove_feedback,
     save_preferences,
 )
 from cineprofile.watch_interest import (
@@ -237,35 +235,3 @@ def render_preferences_tab(database: str | Path, profile: dict | None) -> None:
             st.rerun()
     else:
         st.info("Aucun élément correspondant dans le profil.")
-
-    st.divider()
-    st.markdown("#### Tes retours sur les suggestions")
-    feedback_rows = list(load_feedback(database).values())
-    if not feedback_rows:
-        st.caption("Aucun retour enregistré pour le moment.")
-        return
-
-    st.dataframe(
-        pd.DataFrame(feedback_rows)[["title", "action", "updated_at"]],
-        hide_index=True,
-        width="stretch",
-        column_config={
-            "title": "Film",
-            "action": "Retour",
-            "updated_at": "Date",
-        },
-    )
-    feedback_labels = {
-        f"{row['title']} · {row['action']}": row["tmdb_id"]
-        for row in feedback_rows
-    }
-    feedback_to_remove = st.selectbox(
-        "Annuler un retour",
-        ["—"] + list(feedback_labels),
-    )
-    if (
-        feedback_to_remove != "—"
-        and st.button("Annuler le retour sélectionné")
-    ):
-        remove_feedback(feedback_labels[feedback_to_remove], database)
-        st.rerun()

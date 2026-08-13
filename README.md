@@ -1,9 +1,9 @@
 # CineProfile
 
-Version actuelle : **0.11.0**. Les deux listes de recommandations sont
-complétées par un apprentissage progressif : les notes IMDb mettent à jour le
-profil, « À voir » affine l’envie, « Pas intéressé » fournit un contre-exemple
-et « Déjà vu » reste une simple exclusion.
+Version actuelle : **0.12.0**. L’écran permanent **Mes films** rassemble les
+statuts « À voir », « Pas intéressé », « Déjà vu » et **Downloaded**. Ils sont
+filtrables, modifiables et réversibles. CineProfile peut aussi envoyer un film
+à Radarr et conserver localement l’historique horodaté de chaque tentative.
 
 CineProfile transforme un export `ratings.csv` d’IMDb en trois éléments
 réutilisables :
@@ -17,6 +17,29 @@ réutilisables :
 
 Le CSV n’est donc pas le modèle : c’est l’historique initial. La base enrichie
 devient la mémoire durable de l’outil.
+
+## Mise à jour 0.12.0 — Mes films et Radarr
+
+L’onglet **Mes films** conserve les décisions prises depuis les suggestions,
+même lorsqu’un film disparaît de la liste courante. Les vues **Tous**, **À
+voir**, **Déjà vus**, **Pas intéressé** et **Downloaded** permettent de les
+retrouver, puis de modifier ou d’annuler leur statut.
+
+Dans la barre latérale, renseigner l’adresse locale de Radarr et sa clé API,
+puis cliquer sur **Connecter**. CineProfile valide l’accès et propose le dossier
+racine ainsi que le profil de qualité récupérés depuis Radarr.
+
+Le bouton **Download** d’une recommandation ajoute ensuite le film, active sa
+surveillance et lance sa recherche. **Downloaded** signifie ici « envoyé à
+Radarr au moins une fois » : la présence du fichier n’est pas vérifiée. Annuler
+ce statut agit uniquement dans CineProfile, sans supprimer le film de Radarr ni
+interrompre une recherche ou un téléchargement. Le bouton redevient alors
+utilisable. Les succès, doublons déjà présents et échecs restent horodatés dans
+l’historique local.
+
+Le rapport d’import IMDb distingue désormais les titres nouveaux, réellement
+modifiés, inchangés et ignorés. Il indique aussi combien d’enrichissements TMDB,
+de statuts et de corrections du profil ont été conservés.
 
 ## Mise à jour 0.10.1 — valeurs sûres réellement pertinentes
 

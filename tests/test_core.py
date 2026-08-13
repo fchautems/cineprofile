@@ -103,8 +103,61 @@ def test_import_is_idempotent(tmp_path: Path) -> None:
     second = import_ratings(SAMPLE, database)
     assert first.imported_rows == 6
     assert first.updated_rows == 0
+    assert first.unchanged_rows == 0
     assert second.imported_rows == 0
-    assert second.updated_rows == 6
+    assert second.updated_rows == 0
+    assert second.unchanged_rows == 6
+
+
+def test_incremental_import_reports_changes_and_preserves_local_data(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "incremental.db"
+    import_ratings(SAMPLE, database)
+    with transaction(database) as connection:
+        connection.execute(
+            """
+            UPDATE titles
+            SET metadata_status='done', tmdb_id=603, overview='Enrichi'
+            WHERE imdb_id='tt0133093'
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO recommendation_feedback(
+              tmdb_id, title, action, updated_at
+            ) VALUES (603, 'The Matrix', 'already_seen', '2026-08-13')
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO profile_preferences(
+              entity_type, entity_id, entity_name, adjustment, updated_at
+            ) VALUES ('genres', '878', 'Science-Fiction', 1, '2026-08-13')
+            """
+        )
+
+    changed_payload = SAMPLE.read_text(encoding="utf-8").replace(
+        "tt0133093,10,",
+        "tt0133093,9,",
+        1,
+    ).encode("utf-8")
+    result = import_ratings(changed_payload, database)
+
+    assert result.imported_rows == 0
+    assert result.updated_rows == 1
+    assert result.unchanged_rows == 5
+    assert result.enriched_rows_preserved == 1
+    assert result.feedback_rows_preserved == 1
+    assert result.preference_rows_preserved == 1
+    with connect(database) as connection:
+        row = connection.execute(
+            """
+            SELECT user_rating, metadata_status, tmdb_id, overview
+            FROM titles WHERE imdb_id='tt0133093'
+            """
+        ).fetchone()
+    assert tuple(row) == (9.0, "done", 603, "Enrichi")
 
 
 def test_database_context_manager_closes_connection(tmp_path: Path) -> None:
@@ -237,7 +290,8 @@ def test_streamlit_exposes_all_tabs_and_excludable_genres(
         "2 · Comprendre le profil",
         "3 · Explorer la vidéothèque",
         "4 · Suggestions",
-        "5 · Ajuster le profil",
+        "5 · Mes films",
+        "6 · Ajuster le profil",
     ]
     excluded = next(
         widget

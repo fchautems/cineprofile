@@ -16,10 +16,17 @@ from cineprofile.db import initialize
 from cineprofile.diagnostics import configure_logging
 from cineprofile.imdb_import import database_counts
 from cineprofile.profile import build_profile, profile_needs_refresh
-from cineprofile.settings import forget_tmdb_token_file, save_tmdb_token_file
+from cineprofile.radarr import RadarrClient
+from cineprofile.settings import (
+    forget_radarr_connection_file,
+    forget_tmdb_token_file,
+    save_radarr_connection_file,
+    save_tmdb_token_file,
+)
 from cineprofile.ui_catalog import clear_catalog_cache, render_catalog_tab
 from cineprofile.ui_common import latest_profile, metric_row
 from cineprofile.ui_import import render_import_tab
+from cineprofile.ui_my_movies import render_my_movies_tab
 from cineprofile.ui_preferences import render_preferences_tab
 from cineprofile.ui_profile import render_profile_tab
 from cineprofile.ui_recommendations import render_recommendations_tab
@@ -116,6 +123,21 @@ def forget_tmdb_token() -> None:
     st.session_state["tmdb_token_notice"] = "Jeton local supprimé."
 
 
+def forget_radarr_connection() -> None:
+    forget_radarr_connection_file(ENV_PATH)
+    os.environ.pop("RADARR_URL", None)
+    os.environ.pop("RADARR_API_KEY", None)
+    for state_key in (
+        "radarr_url_input",
+        "radarr_api_key_input",
+        "radarr_root_folders",
+        "radarr_quality_profiles",
+        "radarr_version",
+        "radarr_connection_error",
+    ):
+        st.session_state.pop(state_key, None)
+
+
 token = st.sidebar.text_input(
     "Jeton de lecture TMDB",
     value=os.getenv("TMDB_TOKEN", ""),
@@ -150,19 +172,109 @@ if technical_log.is_file():
         width="stretch",
     )
 
+radarr_config = None
+with st.sidebar.expander("Radarr", expanded=False):
+    radarr_url = st.text_input(
+        "Adresse de Radarr",
+        value=os.getenv("RADARR_URL", "http://localhost:7878"),
+        key="radarr_url_input",
+        placeholder="http://192.168.1.10:7878",
+    )
+    radarr_api_key = st.text_input(
+        "Clé API Radarr",
+        value=os.getenv("RADARR_API_KEY", ""),
+        type="password",
+        key="radarr_api_key_input",
+    )
+    radarr_actions = st.columns(2)
+    if radarr_actions[0].button(
+        "Connecter",
+        key="connect_radarr",
+        width="stretch",
+    ):
+        try:
+            with RadarrClient(radarr_url, radarr_api_key) as radarr_client:
+                radarr_status = radarr_client.status()
+                root_folders = radarr_client.root_folders()
+                quality_profiles = radarr_client.quality_profiles()
+            if not root_folders:
+                raise ValueError("Radarr ne contient aucun dossier racine.")
+            if not quality_profiles:
+                raise ValueError("Radarr ne contient aucun profil de qualité.")
+            save_radarr_connection_file(ENV_PATH, radarr_url, radarr_api_key)
+            os.environ["RADARR_URL"] = radarr_url.strip().rstrip("/")
+            os.environ["RADARR_API_KEY"] = radarr_api_key.strip()
+            st.session_state["radarr_root_folders"] = root_folders
+            st.session_state["radarr_quality_profiles"] = quality_profiles
+            st.session_state["radarr_version"] = str(
+                radarr_status.get("version") or "connecté"
+            )
+            st.session_state.pop("radarr_connection_error", None)
+        except Exception as exc:
+            st.session_state.pop("radarr_root_folders", None)
+            st.session_state.pop("radarr_quality_profiles", None)
+            st.session_state["radarr_connection_error"] = str(exc)
+    radarr_actions[1].button(
+        "Oublier",
+        key="forget_radarr",
+        width="stretch",
+        on_click=forget_radarr_connection,
+    )
+
+    connection_error = st.session_state.get("radarr_connection_error")
+    if connection_error:
+        st.error(connection_error)
+    root_folders = st.session_state.get("radarr_root_folders", [])
+    quality_profiles = st.session_state.get("radarr_quality_profiles", [])
+    if root_folders and quality_profiles:
+        st.success(
+            "Radarr " + str(st.session_state.get("radarr_version", "connecté"))
+        )
+        root_index = st.selectbox(
+            "Dossier des films",
+            range(len(root_folders)),
+            format_func=lambda index: str(root_folders[index].get("path") or "—"),
+            key="radarr_root_index",
+        )
+        profile_index = st.selectbox(
+            "Qualité",
+            range(len(quality_profiles)),
+            format_func=lambda index: str(
+                quality_profiles[index].get("name") or "—"
+            ),
+            key="radarr_quality_index",
+        )
+        radarr_config = {
+            "url": radarr_url.strip().rstrip("/"),
+            "api_key": radarr_api_key.strip(),
+            "root_folder_path": root_folders[root_index]["path"],
+            "quality_profile_id": int(quality_profiles[profile_index]["id"]),
+        }
+        st.caption(
+            "Le bouton de téléchargement ajoute le film et lance sa recherche."
+        )
+
 counts = database_counts(DB_PATH)
 profile = latest_profile(DB_PATH)
 if counts["total"] and profile_needs_refresh(profile, counts):
     profile = build_profile(DB_PATH)
 metric_row(counts, profile)
 
-tab_import, tab_profile, tab_catalog, tab_recommend, tab_preferences = st.tabs(
+(
+    tab_import,
+    tab_profile,
+    tab_catalog,
+    tab_recommend,
+    tab_my_movies,
+    tab_preferences,
+) = st.tabs(
     [
         "1 · Importer et enrichir",
         "2 · Comprendre le profil",
         "3 · Explorer la vidéothèque",
         "4 · Suggestions",
-        "5 · Ajuster le profil",
+        "5 · Mes films",
+        "6 · Ajuster le profil",
     ]
 )
 
@@ -195,6 +307,9 @@ with tab_recommend:
         language=LANGUAGE,
         region=REGION,
         logger=APP_LOGGER,
+        radarr_config=radarr_config,
     )
+with tab_my_movies:
+    render_my_movies_tab(DB_PATH, radarr_config=radarr_config)
 with tab_preferences:
     render_preferences_tab(DB_PATH, profile)
