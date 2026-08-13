@@ -31,7 +31,7 @@ def test_my_movies_unifies_feedback_and_downloads(tmp_path: Path) -> None:
     assert {row["tmdb_id"] for row in movies} == {1, 2, 3}
     assert [row["tmdb_id"] for row in filter_my_movies(movies, "À voir")] == [1]
     assert [row["tmdb_id"] for row in filter_my_movies(movies, "Déjà vus")] == [3]
-    assert {row["tmdb_id"] for row in filter_my_movies(movies, "Downloaded")} == {
+    assert {row["tmdb_id"] for row in filter_my_movies(movies, "Radarr")} == {
         2,
         3,
     }

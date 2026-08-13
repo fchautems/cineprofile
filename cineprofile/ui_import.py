@@ -86,7 +86,7 @@ def render_import_tab(
     )
     if not token:
         st.info(
-            "Ajoute un jeton TMDB dans la barre latérale pour enrichir les données. "
+            "Ajoute un jeton TMDB dans Réglages pour enrichir les données. "
             "L’analyse des colonnes IMDb fonctionne déjà sans jeton."
         )
 

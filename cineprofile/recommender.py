@@ -34,6 +34,7 @@ from .personal_model import (
 from .preferences import load_feedback, load_preferences
 from .public_rating import public_rating
 from .ranking import exploration_for_mode, rerank_recommendations
+from .recommendation_state import save_recommendation_state
 from .semantic import semantic_evidence
 from .tmdb import TmdbClient, enrich_candidates
 from .watch_interest import score_watch_interest
@@ -1401,4 +1402,10 @@ def recommend_movies(
     )
     diagnostics["diagnostic_path"] = str(diagnostic_path)
     diagnostics["diagnostic_file_name"] = diagnostic_path.name
+    save_recommendation_state(
+        profile.get("profile_run_id"),
+        settings_payload,
+        diagnostics,
+        database,
+    )
     return scored, diagnostics

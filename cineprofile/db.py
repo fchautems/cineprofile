@@ -8,7 +8,7 @@ from typing import Iterator
 
 
 DEFAULT_DB_PATH = Path(os.getenv("CINEPROFILE_DB", "data/cineprofile.db"))
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 class CineProfileConnection(sqlite3.Connection):
@@ -127,6 +127,14 @@ CREATE TABLE IF NOT EXISTS recommendations (
     reasons_json TEXT NOT NULL,
     payload_json TEXT NOT NULL,
     created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS recommendation_states (
+    profile_run_id INTEGER PRIMARY KEY
+        REFERENCES profile_runs(id) ON DELETE CASCADE,
+    settings_json TEXT NOT NULL,
+    diagnostics_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS candidate_cache (

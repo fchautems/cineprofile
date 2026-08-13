@@ -226,7 +226,7 @@ def render_recommendation_cards(
 
             radarr_request = radarr_requests.get(int(item["tmdb_id"]))
             if radarr_request:
-                score_col.success("Downloaded")
+                score_col.success("Envoyé à Radarr")
 
             action_columns = st.columns(4)
             if action_columns[0].button(
@@ -253,12 +253,12 @@ def render_recommendation_cards(
                 _remove_from_recommendation_state(int(item["tmdb_id"]))
                 st.rerun()
             if action_columns[3].button(
-                "Downloaded" if radarr_request else "Download",
+                "Envoyé à Radarr" if radarr_request else "Envoyer à Radarr",
                 key=f"radarr_{view}_{item['tmdb_id']}",
                 width="stretch",
                 disabled=radarr_config is None or radarr_request is not None,
                 help=(
-                    "Connecte d’abord Radarr dans la barre latérale."
+                    "Connecte d’abord Radarr dans Réglages."
                     if radarr_config is None
                     else "Ajoute le film à Radarr et lance sa recherche."
                 ),

@@ -78,14 +78,17 @@ def _with_environment_fallback(stored: dict[str, str]) -> dict[str, str]:
     }
 
 
-def render_connections_sidebar(
+def render_connections(
     environment_path: str | Path,
+    *,
+    sidebar: bool = False,
 ) -> tuple[str, dict | None]:
-    """Render compact persistent connection settings and return active values."""
+    """Render persistent connection settings and return active values."""
+    host = st.sidebar if sidebar else st
     try:
         stored = read_connection_settings(environment_path)
     except ValueError as exc:
-        st.sidebar.error(str(exc))
+        host.error(str(exc))
         return "", None
 
     settings = _with_environment_fallback(stored)
@@ -119,7 +122,7 @@ def render_connections_sidebar(
     roots = st.session_state.get("radarr_root_folders", [])
     profiles = st.session_state.get("radarr_quality_profiles", [])
 
-    with st.sidebar.expander("Connexions", expanded=editing or not configured):
+    with host.expander("Connexions", expanded=editing or not configured):
         if not editing:
             st.success("TMDB configuré")
             if roots and profiles:
@@ -250,7 +253,7 @@ def render_connections_sidebar(
 
     notice = st.session_state.pop("connection_notice", None)
     if notice:
-        st.sidebar.success(notice)
+        host.success(notice)
 
     # Re-read after UI callbacks so the returned configuration always comes
     # from durable storage rather than from password widget state.
@@ -281,3 +284,76 @@ def render_connections_sidebar(
         "root_folder_path": str(roots[root_index]["path"]),
         "quality_profile_id": int(profiles[profile_index]["id"]),
     }
+
+
+def render_connections_sidebar(
+    environment_path: str | Path,
+) -> tuple[str, dict | None]:
+    """Compatibility wrapper for the former sidebar-based interface."""
+    return render_connections(environment_path, sidebar=True)
+
+
+def resolve_connections(environment_path: str | Path) -> tuple[str, dict | None]:
+    """Read durable connection settings without rendering their editor."""
+    try:
+        stored = read_connection_settings(environment_path)
+    except ValueError as exc:
+        st.session_state["connection_configuration_error"] = str(exc)
+        return "", None
+
+    settings = _with_environment_fallback(stored)
+    token = settings["TMDB_TOKEN"]
+    radarr_url = settings["RADARR_URL"]
+    radarr_key = settings["RADARR_API_KEY"]
+    signature = _radarr_signature(radarr_url, radarr_key) if radarr_key else ""
+    if (
+        radarr_url
+        and radarr_key
+        and st.session_state.get("radarr_connection_signature") != signature
+    ):
+        try:
+            status, roots, profiles = _connect_radarr(radarr_url, radarr_key)
+        except Exception as exc:
+            _forget_radarr_session()
+            st.session_state["radarr_connection_signature"] = signature
+            st.session_state["radarr_connection_error"] = str(exc)
+        else:
+            _remember_radarr_session(radarr_url, radarr_key, status, roots, profiles)
+
+    roots = st.session_state.get("radarr_root_folders", [])
+    profiles = st.session_state.get("radarr_quality_profiles", [])
+    if not (
+        radarr_url
+        and radarr_key
+        and roots
+        and profiles
+    ):
+        return token, None
+    root_index = _select_index(roots, "path", settings["RADARR_ROOT_FOLDER"])
+    profile_index = _select_index(
+        profiles,
+        "id",
+        settings["RADARR_QUALITY_PROFILE_ID"],
+    )
+    return token, {
+        "url": radarr_url,
+        "api_key": radarr_key,
+        "root_folder_path": str(roots[root_index]["path"]),
+        "quality_profile_id": int(profiles[profile_index]["id"]),
+    }
+
+
+def render_connection_status_sidebar(
+    token: str,
+    radarr_config: dict | None,
+) -> None:
+    """Keep only the useful connection status visible during daily use."""
+    if st.session_state.get("connection_configuration_error"):
+        st.sidebar.warning("Configuration locale à corriger dans Réglages.")
+    else:
+        st.sidebar.caption(
+            "TMDB : configuré" if token else "TMDB : à configurer"
+        )
+        st.sidebar.caption(
+            "Radarr : connecté" if radarr_config else "Radarr : non connecté"
+        )

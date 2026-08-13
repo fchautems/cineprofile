@@ -1,7 +1,7 @@
 # CineProfile
 
-Version actuelle : **0.12.2**. L’écran permanent **Mes films** rassemble les
-statuts « À voir », « Pas intéressé », « Déjà vu » et **Downloaded**. Ils sont
+Version actuelle : **0.13.0**. L’écran permanent **Ma liste** rassemble les
+statuts « À voir », « Pas intéressé », « Déjà vu » et les envois à Radarr. Ils sont
 filtrables, modifiables et réversibles. CineProfile peut aussi envoyer un film
 à Radarr et conserver localement l’historique horodaté de chaque tentative.
 
@@ -18,11 +18,28 @@ réutilisables :
 Le CSV n’est donc pas le modèle : c’est l’historique initial. La base enrichie
 devient la mémoire durable de l’outil.
 
+## Mise à jour 0.13.0 — interface simplifiée et suggestions persistantes
+
+L’application s’organise maintenant autour de quatre espaces : **Suggestions**,
+**Ma liste**, **Mon profil** et **Réglages**. Les connexions, l’import IMDb,
+l’enrichissement et les diagnostics ne prennent plus la place de l’usage
+quotidien.
+
+La dernière sélection calculée est conservée dans la base et réapparaît après
+un redémarrage, avec ses paramètres et son diagnostic. Il devient donc possible
+de consulter, filtrer et décider sans reconstruire inutilement le vivier TMDB.
+Une ancienne sélection 0.12 est également restaurée lorsqu’elle est compatible
+avec le profil courant.
+
+Le libellé **Downloaded** est remplacé par **Envoyé à Radarr** : CineProfile
+indique que Radarr a accepté la recherche, sans prétendre qu’un fichier a déjà
+été importé. Les états techniques détaillés viendront dans la suite de la 0.13.
+
 ## Correctif 0.12.2 — recherche Radarr explicite
 
 Après avoir ajouté ou retrouvé le film dans Radarr, CineProfile envoie
 maintenant une commande `MoviesSearch` dédiée avec l’identifiant interne du
-film. Le statut local **Downloaded** n’est enregistré que si Radarr accepte
+film. Le statut local **Envoyé à Radarr** est enregistré lorsque Radarr accepte
 cette commande. En cas de refus, le message précise que le film est présent
 dans Radarr mais que sa recherche n’a pas pu être lancée ; un nouveau clic
 permet alors de retenter la recherche sans ajouter le film en double.
@@ -46,17 +63,17 @@ l’explique explicitement au lieu de tenter une écriture incohérente.
 
 ## Mise à jour 0.12.0 — Mes films et Radarr
 
-L’onglet **Mes films** conserve les décisions prises depuis les suggestions,
+L’ancêtre de l’onglet **Ma liste**, alors nommé **Mes films**, conserve les décisions prises depuis les suggestions,
 même lorsqu’un film disparaît de la liste courante. Les vues **Tous**, **À
-voir**, **Déjà vus**, **Pas intéressé** et **Downloaded** permettent de les
+voir**, **Déjà vus**, **Pas intéressé** et les envois à Radarr permettent de les
 retrouver, puis de modifier ou d’annuler leur statut.
 
-Dans la barre latérale, renseigner l’adresse locale de Radarr et sa clé API,
-puis cliquer sur **Connecter**. CineProfile valide l’accès et propose le dossier
-racine ainsi que le profil de qualité récupérés depuis Radarr.
+Dans **Réglages**, renseigner l’adresse locale de Radarr et sa clé API.
+CineProfile valide l’accès et propose le dossier racine ainsi que le profil de
+qualité récupérés depuis Radarr.
 
-Le bouton **Download** d’une recommandation ajoute ensuite le film, active sa
-surveillance et lance sa recherche. **Downloaded** signifie ici « envoyé à
+Le bouton **Envoyer à Radarr** d’une recommandation ajoute ensuite le film, active sa
+surveillance et lance sa recherche. **Envoyé à Radarr** signifie ici « envoyé à
 Radarr au moins une fois » : la présence du fichier n’est pas vérifiée. Annuler
 ce statut agit uniquement dans CineProfile, sans supprimer le film de Radarr ni
 interrompre une recherche ou un téléchargement. Le bouton redevient alors

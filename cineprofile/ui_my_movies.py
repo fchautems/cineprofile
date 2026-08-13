@@ -24,7 +24,7 @@ FEEDBACK_LABELS = {
     "not_interested": "Pas intéressé",
 }
 LABEL_FEEDBACK = {label: action for action, label in FEEDBACK_LABELS.items()}
-FILTERS = ("Tous", "À voir", "Déjà vus", "Pas intéressé", "Downloaded")
+FILTERS = ("Tous", "À voir", "Déjà vus", "Pas intéressé", "Radarr")
 
 
 def load_my_movies(database: str | Path) -> list[dict]:
@@ -95,7 +95,7 @@ def filter_my_movies(
         filtered = [
             row for row in filtered if row["feedback_action"] == "not_interested"
         ]
-    elif status_filter == "Downloaded":
+    elif status_filter == "Radarr":
         filtered = [row for row in filtered if row["downloaded"]]
     needle = search.strip().casefold()
     if needle:
@@ -154,16 +154,16 @@ def render_my_movies_tab(
     *,
     radarr_config: dict | None = None,
 ) -> None:
-    st.subheader("Mes films")
+    st.subheader("Ma liste")
     st.write(
-        "Retrouve tous les films marqués depuis les suggestions, modifie leur "
-        "statut et consulte l’historique local des envois à Radarr."
+        "Retrouve tous les films sur lesquels tu as agi dans CineProfile, "
+        "y compris ceux envoyés à Radarr."
     )
     movies = load_my_movies(database)
     if not movies:
         st.info(
             "Aucun film marqué pour le moment. Utilise À voir, Pas intéressé, "
-            "Déjà vu ou Download depuis les suggestions."
+            "Déjà vu ou Envoyer à Radarr depuis les suggestions."
         )
         return
 
@@ -178,7 +178,7 @@ def render_my_movies_tab(
         sum(row["feedback_action"] == "already_seen" for row in movies),
     )
     metrics[3].metric(
-        "Downloaded",
+        "Envoyés à Radarr",
         sum(row["downloaded"] for row in movies),
     )
 
@@ -201,7 +201,7 @@ def render_my_movies_tab(
                 "Film": row["title"],
                 "Année": row["year"],
                 "Statut": row["feedback_label"],
-                "Downloaded": "Oui" if row["downloaded"] else "Non",
+                "Radarr": "Envoyé" if row["downloaded"] else "—",
                 "Mis à jour": str(row.get("updated_at") or "")[:19],
             }
             for row in visible
@@ -249,28 +249,29 @@ def render_my_movies_tab(
 
         st.divider()
         if selected["downloaded"]:
-            st.success("Downloaded")
+            st.success("Envoyé à Radarr")
             st.caption(
-                "Envoyé à Radarr au moins une fois — présence du fichier non "
-                "vérifiée. Annuler ce statut agit uniquement dans CineProfile."
+                "La recherche a été acceptée par Radarr — la présence du fichier "
+                "n’est pas encore vérifiée. Retirer ce marquage agit uniquement "
+                "dans CineProfile."
             )
             if st.button(
-                "Annuler le statut Downloaded",
+                "Retirer le marquage Radarr",
                 key=f"clear_downloaded_{selected['tmdb_id']}",
             ):
                 remove_radarr_request(int(selected["tmdb_id"]), database)
                 st.rerun()
         else:
             st.caption(
-                "Download envoie le film à Radarr, active sa surveillance et "
+                "Envoyer à Radarr active la surveillance et "
                 "lance sa recherche."
             )
             if st.button(
-                "Download",
+                "Envoyer à Radarr",
                 key=f"download_my_movie_{selected['tmdb_id']}",
                 disabled=radarr_config is None,
                 help=(
-                    "Connecte d’abord Radarr dans la barre latérale."
+                    "Connecte d’abord Radarr dans Réglages."
                     if radarr_config is None
                     else "Envoyer ce film à Radarr."
                 ),

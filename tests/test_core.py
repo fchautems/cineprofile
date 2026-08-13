@@ -294,12 +294,10 @@ def test_streamlit_exposes_all_tabs_and_excludable_genres(
         button.label == "Modifier les connexions" for button in app.button
     )
     assert [tab.label for tab in app.tabs] == [
-        "1 · Importer et enrichir",
-        "2 · Comprendre le profil",
-        "3 · Explorer la vidéothèque",
-        "4 · Suggestions",
-        "5 · Mes films",
-        "6 · Ajuster le profil",
+        "Suggestions",
+        "Ma liste",
+        "Mon profil",
+        "Réglages",
     ]
     excluded = next(
         widget

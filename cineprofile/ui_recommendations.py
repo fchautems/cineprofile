@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -13,11 +13,43 @@ from cineprofile import __version__
 from cineprofile.compat import CineProfileVersionMismatch, unpack_recommendation_run
 from cineprofile.diagnostics import diagnostic_with_ui_view
 from cineprofile.genre_catalog import TMDB_EXCLUDABLE_GENRES
+from cineprofile.preferences import load_feedback
 from cineprofile.ranking import build_recommendation_lists
+from cineprofile.recommendation_state import load_saved_recommendations
 from cineprofile.recommender import recommend_movies
 from cineprofile.result_filters import filter_recommendations, sort_recommendations
 from cineprofile.tmdb import TmdbClient
 from cineprofile.ui_recommendation_cards import render_recommendation_cards
+
+
+def _restore_saved_selection(database: str | Path, profile: dict | None) -> None:
+    """Restore the last selection after a Streamlit restart.
+
+    Films explicitly rejected or marked as seen since the search are removed
+    from the restored view. The saved selection itself remains an audit trail.
+    """
+    if not profile or st.session_state.get("recommendations") is not None:
+        return
+    saved = load_saved_recommendations(profile.get("profile_run_id"), database)
+    if not saved:
+        return
+    excluded = {
+        tmdb_id
+        for tmdb_id, feedback in load_feedback(database).items()
+        if feedback.get("action") in {"not_interested", "already_seen"}
+    }
+    recommendations = [
+        item
+        for item in saved["recommendations"]
+        if int(item.get("tmdb_id") or -1) not in excluded
+    ]
+    st.session_state["recommendations"] = recommendations
+    st.session_state["recommendation_lists"] = build_recommendation_lists(
+        recommendations
+    )
+    st.session_state["recommendation_diagnostics"] = saved["diagnostics"]
+    st.session_state["recommendation_settings"] = saved["settings"]
+    st.session_state["recommendation_updated_at"] = saved["updated_at"]
 
 
 def _render_recommendation_list(
@@ -378,7 +410,7 @@ def render_recommendations_tab(
     logger: logging.Logger,
     radarr_config: dict | None = None,
 ) -> None:
-    st.subheader("Tes prochaines découvertes")
+    st.subheader("Suggestions")
     st.write(
         "Une seule recherche produit maintenant deux listes complémentaires : "
         "les valeurs sûres privilégient les films publics solides qui restent "
@@ -421,6 +453,7 @@ def render_recommendations_tab(
             dans les découvertes, comme petit garde-fou de qualité.
             """
         )
+    _restore_saved_selection(database, profile)
     if not profile:
         st.info("Calcule d’abord le profil.")
         recommendations = []
@@ -428,6 +461,13 @@ def render_recommendations_tab(
         st.info("Le jeton TMDB est nécessaire pour rechercher des films.")
         recommendations = []
     else:
+        existing_selection = st.session_state.get("recommendations", [])
+        updated_at = st.session_state.get("recommendation_updated_at")
+        if existing_selection and updated_at:
+            st.caption(
+                "Dernière sélection conservée · "
+                + str(updated_at).replace("T", " ")[:19]
+            )
         setting_columns = st.columns(2)
         period_choice = setting_columns[0].selectbox(
             "Période",
@@ -535,7 +575,12 @@ def render_recommendations_tab(
                 else today.isoformat()
             )
 
-        if st.button("Chercher mes films", width="stretch"):
+        search_label = (
+            "Actualiser les suggestions"
+            if existing_selection
+            else "Créer mes suggestions"
+        )
+        if st.button(search_label, width="stretch"):
             try:
                 with st.spinner(
                     "Construction du vivier, analyse des crédits et des histoires…"
@@ -579,6 +624,12 @@ def render_recommendations_tab(
                     build_recommendation_lists(recommendations)
                 )
                 st.session_state["recommendation_diagnostics"] = diagnostics
+                st.session_state["recommendation_settings"] = diagnostics.get(
+                    "settings", {}
+                )
+                st.session_state["recommendation_updated_at"] = datetime.now(
+                    UTC
+                ).isoformat()
                 st.session_state["visible_results_count_safe"] = 20
                 st.session_state["visible_results_count_discovery"] = 20
 

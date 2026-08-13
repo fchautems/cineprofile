@@ -14,13 +14,78 @@ from cineprofile.ui_audit import render_audit_panel
 from cineprofile.ui_common import latest_profile
 
 
+def _render_profile_overview(profile: dict, counts: dict[str, int]) -> None:
+    st.subheader("Mon profil")
+    st.write(
+        "Une lecture simple de ce que ton historique IMDb révèle. Les détails "
+        "techniques et les audits restent disponibles dans Réglages."
+    )
+    summary = profile["summary"]
+    metrics = st.columns(4)
+    metrics[0].metric("Films notés", f"{counts['total']:,}".replace(",", "’"))
+    metrics[1].metric("Films enrichis", f"{counts['enriched']:,}".replace(",", "’"))
+    metrics[2].metric("Note moyenne", f"{float(summary['average_rating']):.2f}")
+    metrics[3].metric("Films notés 8+", f"{100 * float(summary['share_8_or_more']):.0f}%")
+
+    distribution = pd.DataFrame(profile["rating_distribution"])
+    figure = px.bar(
+        distribution,
+        x="rating",
+        y="count",
+        title="Distribution de tes notes",
+        labels={"rating": "Note", "count": "Nombre de films"},
+        color_discrete_sequence=["#c44a34"],
+    )
+    figure.update_layout(showlegend=False, plot_bgcolor="rgba(0,0,0,0)")
+    st.plotly_chart(figure, width="stretch")
+
+    st.markdown("### Repères de goût")
+    dimensions = profile.get("dimensions", {})
+    columns = st.columns(3)
+    for column, (label, key) in zip(
+        columns,
+        (
+            ("Genres", "genres"),
+            ("Réalisateurs", "directors"),
+            ("Thèmes", "keywords"),
+        ),
+        strict=True,
+    ):
+        rows = [
+            row
+            for row in dimensions.get(key, [])
+            if float(row.get("affinity") or 0.0) > 0
+        ][:5]
+        column.markdown(f"**{label}**")
+        if rows:
+            column.write(" · ".join(str(row["name"]) for row in rows))
+        else:
+            column.caption("Pas encore assez de données.")
+
+    model_summary = profile.get("personal_model", {})
+    if model_summary.get("status") == "ready":
+        st.caption(
+            "Le moteur personnel est prêt et se met à jour après un import IMDb "
+            "qui ajoute ou modifie réellement des notes."
+        )
+
+
 def render_profile_tab(
     database: str | Path,
     counts: dict[str, int],
     profile: dict | None,
     *,
     logger: logging.Logger,
+    advanced: bool = False,
 ) -> dict | None:
+    if not advanced:
+        profile = profile or latest_profile(database)
+        if profile:
+            _render_profile_overview(profile, counts)
+        else:
+            st.info("Importe le CSV IMDb pour créer ton profil.")
+        return profile
+
     st.subheader("Une empreinte, pas une simple liste de genres")
     st.write(
         "Le score d’affinité mesure l’écart à ta note moyenne, corrige l’effet "
