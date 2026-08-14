@@ -123,6 +123,12 @@ if counts["total"] and profile_needs_refresh(profile, counts):
     key="main_navigation",
     on_change="rerun",
 )
+current_main_tab = str(st.session_state.get("main_navigation") or "")
+previous_main_tab = st.session_state.get("previous_main_navigation")
+refresh_my_list_on_open = (
+    current_main_tab == "Ma liste" and previous_main_tab != "Ma liste"
+)
+st.session_state["previous_main_navigation"] = current_main_tab
 
 with tab_recommend:
     if tab_recommend.open:
@@ -137,7 +143,11 @@ with tab_recommend:
         )
 with tab_my_movies:
     if tab_my_movies.open:
-        render_my_movies_tab(DB_PATH, radarr_config=radarr_config)
+        render_my_movies_tab(
+            DB_PATH,
+            radarr_config=radarr_config,
+            refresh_on_open=refresh_my_list_on_open,
+        )
 with tab_profile:
     if tab_profile.open:
         profile = render_profile_tab(

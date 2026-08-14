@@ -35,6 +35,27 @@ def radarr_states_stale(
     return False
 
 
+def should_synchronize_radarr_states(
+    requests: dict[int, dict],
+    *,
+    force_sync: bool = False,
+    entered_my_list: bool = False,
+    skip_once: bool = False,
+    now: datetime | None = None,
+) -> bool:
+    """Decide whether this fragment run should contact Radarr.
+
+    Entering Ma liste is deliberately stronger than the short freshness window:
+    the screen must show a new technical snapshot straight away. A local filter
+    or feedback interaction remains exempt from network work for that one run.
+    """
+    if not requests:
+        return False
+    if force_sync or entered_my_list:
+        return True
+    return not skip_once and radarr_states_stale(requests, now=now)
+
+
 def synchronize_radarr_states(
     database: str | Path,
     radarr_config: dict,

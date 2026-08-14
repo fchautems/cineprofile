@@ -15,7 +15,10 @@ from cineprofile.preferences import (
     update_radarr_states,
 )
 from cineprofile.radarr import RadarrClient, RadarrError
-from cineprofile.radarr_sync import radarr_states_stale
+from cineprofile.radarr_sync import (
+    radarr_states_stale,
+    should_synchronize_radarr_states,
+)
 from cineprofile.settings import (
     forget_radarr_connection_file,
     save_radarr_connection_file,
@@ -291,6 +294,28 @@ def test_radarr_state_refresh_does_not_run_on_every_ui_click() -> None:
     assert not radarr_states_stale(fresh, now=now)
     assert radarr_states_stale(stale, now=now)
     assert radarr_states_stale({1: {"status_checked_at": None}}, now=now)
+
+
+def test_radarr_state_refresh_runs_immediately_on_my_list_entry() -> None:
+    now = datetime(2026, 8, 14, 12, 0, tzinfo=UTC)
+    fresh = {1: {"status_checked_at": (now - timedelta(seconds=5)).isoformat()}}
+
+    assert should_synchronize_radarr_states(
+        fresh,
+        entered_my_list=True,
+        now=now,
+    )
+    assert not should_synchronize_radarr_states(
+        fresh,
+        skip_once=True,
+        now=now,
+    )
+    assert should_synchronize_radarr_states(
+        fresh,
+        force_sync=True,
+        skip_once=True,
+        now=now,
+    )
 
 
 def test_radarr_credentials_can_be_saved_and_forgotten(tmp_path: Path) -> None:

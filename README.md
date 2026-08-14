@@ -1,6 +1,6 @@
 # CineProfile
 
-Version actuelle : **0.13.2**. L’écran permanent **Ma liste** rassemble les
+Version actuelle : **0.13.3**. L’écran permanent **Ma liste** rassemble les
 films marqués à voir, écartés, vus et envoyés à Radarr. Les décisions se font
 directement sur les cartes, sont réversibles, et restent visibles dans la liste.
 
@@ -16,6 +16,19 @@ réutilisables :
 
 Le CSV n’est donc pas le modèle : c’est l’historique initial. La base enrichie
 devient la mémoire durable de l’outil.
+
+## Mise à jour 0.13.3 — état Radarr frais dès l’ouverture
+
+Chaque entrée dans **Ma liste** déclenche maintenant immédiatement une
+actualisation Radarr, même si le dernier état était encore récent. Un indicateur
+« Actualisation des états Radarr… » est visible pendant la requête, puis l’heure
+du dernier relevé est affichée. Les clics sur les filtres, la recherche et les
+trois décisions personnelles restent locaux : ils ne déclenchent pas cette
+requête réseau.
+
+Cette version n’intègre volontairement pas Bazarr dans CineProfile. Bazarr doit
+recevoir l’événement d’import de Radarr via sa propre connexion/webhook ; son
+état sera traité dans une évolution séparée une fois le flux réel validé.
 
 ## Mise à jour 0.13.2 — états Radarr réels et interface fluide
 

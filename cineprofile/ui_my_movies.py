@@ -9,7 +9,7 @@ from cineprofile.preferences import (
     load_radarr_requests,
 )
 from cineprofile.radarr_sync import (
-    radarr_states_stale,
+    should_synchronize_radarr_states,
     synchronize_radarr_states,
 )
 from cineprofile.ui_recommendation_cards import render_recommendation_cards
@@ -139,21 +139,25 @@ def render_my_movies_tab(
     database: str | Path,
     *,
     radarr_config: dict | None = None,
+    refresh_on_open: bool = False,
 ) -> None:
     radarr_requests = load_radarr_requests(database)
     force_sync = bool(st.session_state.pop("force_radarr_sync", False))
     skip_sync = bool(st.session_state.pop("skip_radarr_sync_once", False))
-    if (
-        radarr_config
-        and radarr_requests
-        and (force_sync or (not skip_sync and radarr_states_stale(radarr_requests)))
-    ):
-        try:
-            synchronize_radarr_states(database, radarr_config)
-        except Exception as exc:
-            st.session_state["radarr_sync_error"] = str(exc)
-        else:
-            st.session_state.pop("radarr_sync_error", None)
+    needs_sync = radarr_config and should_synchronize_radarr_states(
+        radarr_requests,
+        force_sync=force_sync,
+        entered_my_list=refresh_on_open,
+        skip_once=skip_sync,
+    )
+    if needs_sync:
+        with st.spinner("Actualisation des états Radarr…"):
+            try:
+                synchronize_radarr_states(database, radarr_config)
+            except Exception as exc:
+                st.session_state["radarr_sync_error"] = str(exc)
+            else:
+                st.session_state.pop("radarr_sync_error", None)
 
     st.subheader("Ma liste")
     st.write(
