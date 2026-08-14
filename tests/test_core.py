@@ -18,6 +18,7 @@ import cineprofile.semantic as semantic_module
 import cineprofile.hybrid_model as hybrid_module
 import cineprofile.audit as audit_module
 from cineprofile.candidate_pool import (
+    SOURCE_BACK_CATALOG,
     SOURCE_FAVORITES,
     SOURCE_POPULARITY,
     SOURCE_SEMANTIC,
@@ -471,7 +472,7 @@ def test_version_mismatch_is_reported_cleanly() -> None:
         unpack_recommendation_run([{"title": "ancien résultat"}])
 
     current_module = ModuleType("current_recommender")
-    current_module.RECOMMENDATION_PROTOCOL = 15
+    current_module.RECOMMENDATION_PROTOCOL = 16
     ensure_recommendation_protocol(current_module)
     assert unpack_recommendation_run(([{"title": "ok"}], {"returned": 1}))[1][
         "returned"
@@ -635,7 +636,7 @@ def test_recommendation_card_renders_with_explanation(
     import_ratings(SAMPLE, database)
     build_profile(database)
     app = AppTest.from_file(str(ROOT / "app.py"))
-    app.session_state["recommendation_ui_protocol"] = 15
+    app.session_state["recommendation_ui_protocol"] = 16
     app.session_state["recommendations"] = [
         {
             "tmdb_id": 1,
@@ -878,6 +879,90 @@ def test_horror_exclusion_does_not_consume_analysis_budget(
 
     assert client.details_calls == [878]
     assert [item["tmdb_id"] for item in results] == [878]
+
+
+def test_recent_and_classic_enrichment_budgets_are_independent(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    database = tmp_path / "independent-lanes.db"
+    import_ratings(SAMPLE, database)
+    profile = build_profile(database)
+    recent_release = date.today().isoformat()
+    classic_release = "1940-10-15"
+    candidates = [
+        {
+            "id": 2025,
+            "title": "Film récent",
+            "release_date": recent_release,
+            "vote_count": 10_000,
+            "popularity": 50,
+            "_sources": [SOURCE_POPULARITY],
+        },
+        {
+            "id": 1940,
+            "title": "Film classique",
+            "release_date": classic_release,
+            "vote_count": 10_000,
+            "popularity": 50,
+            "_sources": [SOURCE_BACK_CATALOG],
+        },
+    ]
+    monkeypatch.setattr(
+        recommender_module,
+        "_candidate_pool",
+        lambda *_args, **_kwargs: (
+            candidates,
+            {SOURCE_POPULARITY: 1, SOURCE_BACK_CATALOG: 1},
+            {
+                "raw_unique_candidates": 2,
+                "excluded_outside_window": 0,
+                "excluded_insufficient_votes": 0,
+                "excluded_genres": 0,
+                "after_pre_enrichment_filters": 2,
+            },
+        ),
+    )
+
+    class FakeClient:
+        language = "fr-FR"
+        region = "CH"
+
+        def details(self, _media_type, tmdb_id):
+            is_classic = tmdb_id == 1940
+            return {
+                "id": tmdb_id,
+                "title": "Film classique" if is_classic else "Film récent",
+                "release_date": (
+                    classic_release if is_classic else recent_release
+                ),
+                "overview": "Une histoire de test.",
+                "genres": [],
+                "credits": {"cast": [], "crew": []},
+                "keywords": {"keywords": []},
+                "external_ids": {"imdb_id": f"tt9{tmdb_id:06d}"},
+                "watch/providers": {"results": {}},
+                "vote_average": 8.0,
+                "vote_count": 10_000,
+            }
+
+    results, diagnostics = recommend_movies(
+        FakeClient(),
+        profile,
+        database,
+        start_date=(date.today() - timedelta(days=365 * 3)).isoformat(),
+        end_date=recent_release,
+        depth="Rapide",
+        reliability="Forte",
+        semantic_enabled=False,
+        analysis_limit=1,
+    )
+    lists = build_recommendation_lists(results)
+
+    assert diagnostics["selected_recent_for_enrichment"] == 1
+    assert diagnostics["selected_classics_for_enrichment"] == 1
+    assert [item["tmdb_id"] for item in lists["safe"]] == [2025]
+    assert [item["tmdb_id"] for item in lists["classics"]] == [1940]
 
 
 def test_actor_seen_only_three_times_does_not_influence_affinity(
@@ -1159,12 +1244,59 @@ def test_two_lists_share_one_pool_and_exclude_safe_top_ten() -> None:
 
     assert len(lists["safe"]) == 30
     assert len(lists["discovery"]) == 20
+    assert lists["classics"] == []
     assert safe_top_ids.isdisjoint(discovery_ids)
     assert all(row["ranking_mode"] == "Valeurs sûres" for row in lists["safe"])
     assert all(
         row["ranking_mode"] == "Découvertes pour toi"
         for row in lists["discovery"]
     )
+
+
+def test_classics_never_enter_recent_recommendation_lists() -> None:
+    recent = {
+        "tmdb_id": 2025,
+        "title": "Film récent",
+        "release_date": "2025-06-01",
+        "recommendation_lane": "recent",
+        "bayesian_rating": 7.5,
+        "public_rating_reliability": 90,
+        "vote_count": 10_000,
+        "recommendation_score": 70,
+        "interest_score": 70,
+        "discovery_score": 70,
+        "like_probability": 70,
+        "confidence": 70,
+        "genres": [],
+        "keywords": [],
+        "directors": [],
+        "cast": [],
+    }
+    classic = {
+        **recent,
+        "tmdb_id": 1940,
+        "title": "Le classique",
+        "release_date": "1940-10-15",
+        "recommendation_lane": "classics",
+        "bayesian_rating": 9.0,
+    }
+
+    lists = build_recommendation_lists([classic, recent])
+
+    assert [row["tmdb_id"] for row in lists["safe"]] == [2025]
+    assert all(row["tmdb_id"] != 1940 for row in lists["discovery"])
+    assert [row["tmdb_id"] for row in lists["classics"]] == [1940]
+    assert lists["classics"][0]["recommendation_view"] == "classics"
+
+    # Saved 0.15 selections did not yet persist recommendation_lane.
+    legacy_classic = {
+        **classic,
+        "recommendation_lane": None,
+        "sources": ["Catalogue public plus ancien"],
+    }
+    legacy_lists = build_recommendation_lists([legacy_classic, recent])
+    assert [row["tmdb_id"] for row in legacy_lists["safe"]] == [2025]
+    assert [row["tmdb_id"] for row in legacy_lists["classics"]] == [1940]
 
 
 def test_public_rating_filter_is_specific_to_safe_view() -> None:
@@ -2369,7 +2501,7 @@ def test_recommendations_use_calibrated_personal_prediction(
     monkeypatch.setenv("CINEPROFILE_DB", str(database))
     monkeypatch.setenv("TMDB_TOKEN", "fake-test-token")
     app = AppTest.from_file(str(ROOT / "app.py"))
-    app.session_state["recommendation_ui_protocol"] = 15
+    app.session_state["recommendation_ui_protocol"] = 16
     app.session_state["recommendations"] = [result]
     app.session_state["recommendation_lists"] = {
         "safe": [],
@@ -2726,7 +2858,7 @@ def test_movie_like_french_types_are_kept(title_type: str) -> None:
     assert not is_series_type(title_type)
 
 
-def test_semantic_retrieval_is_a_first_class_candidate_source() -> None:
+def test_semantic_retrieval_only_orders_real_source_buckets() -> None:
     candidates = [
         {
             "id": index,
@@ -2751,8 +2883,11 @@ def test_semantic_retrieval_is_a_first_class_candidate_source() -> None:
     )
 
     assert selected == 3
-    assert SOURCE_SEMANTIC in ordered[0]["_sources"]
-    assert ordered[0]["id"] in {4, 5, 6}
+    assert all(
+        SOURCE_SEMANTIC not in candidate["_sources"]
+        for candidate in ordered
+    )
+    assert ordered[0]["id"] == 6
 
 
 def test_public_rating_no_longer_changes_personal_affinity(

@@ -143,7 +143,7 @@ def render_recommendation_cards(
     view: str = "discovery",
     radarr_config: dict | None = None,
 ) -> None:
-    is_safe = view == "safe"
+    is_safe = view in {"safe", "classics"}
     is_my_list = view == "my_list"
     feedback = load_feedback(database)
     radarr_requests = load_radarr_requests(database)

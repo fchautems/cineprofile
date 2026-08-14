@@ -28,6 +28,7 @@ from .candidate_pool import (
     personalize_candidate_order,
     quota_candidate_order,
     retrieval_bucket_counts,
+    split_candidate_lanes,
 )
 from .db import connect, initialize
 from .diagnostics import configure_logging
@@ -38,7 +39,7 @@ from .semantic import semantic_evidence
 
 
 VIVIER_AUDIT_SCHEMA_VERSION = 1
-VIVIER_AUDIT_VERSION = "cineprofile-vivier-audit-1.2"
+VIVIER_AUDIT_VERSION = "cineprofile-vivier-audit-1.3"
 DEFAULT_BUDGETS = (100, 300, 500)
 DEFAULT_PERIOD_YEARS = 3
 ProgressCallback = Callable[[int, int, str], None]
@@ -265,6 +266,36 @@ def _update_trace_ranks(
                 item["rank"] = ranks.get(int(candidate_id))
 
 
+def _update_trace_lanes(
+    recent: list[dict],
+    classics: list[dict],
+    diagnostics: dict[str, object],
+) -> None:
+    trace = diagnostics.get("candidate_trace")
+    if not isinstance(trace, dict):
+        return
+    recent_ranks = {
+        int(candidate["id"]): position
+        for position, candidate in enumerate(recent, start=1)
+    }
+    classic_ranks = {
+        int(candidate["id"]): position
+        for position, candidate in enumerate(classics, start=1)
+    }
+    for candidate_id, item in trace.items():
+        if not isinstance(item, dict) or item.get("state") != "eligible":
+            continue
+        numeric_id = int(candidate_id)
+        if numeric_id in recent_ranks:
+            item["rank"] = recent_ranks[numeric_id]
+            item["lane"] = "recent"
+        elif numeric_id in classic_ranks:
+            item["state"] = "classic_lane"
+            item["rank"] = None
+            item["classic_rank"] = classic_ranks[numeric_id]
+            item["lane"] = "classics"
+
+
 def _missing_traces(
     targets: list[dict],
     diagnostics: dict[str, object],
@@ -319,6 +350,14 @@ def _aggregate_windows(
             int(window["liked_without_tmdb_id"]) for window in windows
         ),
         "eligible_in_default_period": eligible_target_count,
+        "eligible_present_anywhere": sum(
+            int(window["eligible_period_metrics"]["present_anywhere"])
+            for window in windows
+        ),
+        "classic_target_count": sum(
+            int(window["classic_metrics"]["target_count"])
+            for window in windows
+        ),
         "missing_or_beyond_500": sum(
             len(window["missing_traces"]) for window in windows
         ),
@@ -345,8 +384,53 @@ def _aggregate_windows(
             int(window["pre_quota_metrics"][f"hits_at_{budget}"])
             for window in windows
         )
+        pre_semantic_hits = sum(
+            int(window["pre_semantic_metrics"][f"hits_at_{budget}"])
+            for window in windows
+        )
+        eligible_pre_semantic_hits = sum(
+            int(
+                window["eligible_pre_semantic_metrics"][
+                    f"hits_at_{budget}"
+                ]
+            )
+            for window in windows
+        )
+        eligible_pre_quota_hits = sum(
+            int(
+                window["eligible_pre_quota_metrics"][f"hits_at_{budget}"]
+            )
+            for window in windows
+        )
         summary[f"pre_quota_hits_at_{budget}"] = pre_quota_hits
+        summary[f"pre_semantic_hits_at_{budget}"] = pre_semantic_hits
+        summary[f"semantic_gain_at_{budget}"] = (
+            pre_quota_hits - pre_semantic_hits
+        )
         summary[f"quota_gain_at_{budget}"] = hits - pre_quota_hits
+        summary[f"eligible_pre_semantic_hits_at_{budget}"] = (
+            eligible_pre_semantic_hits
+        )
+        summary[f"eligible_pre_quota_hits_at_{budget}"] = (
+            eligible_pre_quota_hits
+        )
+        summary[f"eligible_semantic_gain_at_{budget}"] = (
+            eligible_pre_quota_hits - eligible_pre_semantic_hits
+        )
+        summary[f"eligible_quota_gain_at_{budget}"] = (
+            eligible_hits - eligible_pre_quota_hits
+        )
+        classic_hits = sum(
+            int(window["classic_metrics"][f"hits_at_{budget}"])
+            for window in windows
+        )
+        classic_target_count = int(summary["classic_target_count"])
+        summary[f"classic_hits_at_{budget}"] = classic_hits
+        summary[f"classic_recall_at_{budget}"] = (
+            classic_hits / classic_target_count
+            if classic_target_count
+            else None
+        )
 
     coverage: defaultdict[str, int] = defaultdict(int)
     source_counts: defaultdict[str, int] = defaultdict(int)
@@ -475,41 +559,88 @@ def run_vivier_audit(
                 snapshot,
                 diagnostics,
             )
-            retrieval_evidence = semantic_evidence(
-                snapshot,
+            recent_candidates, classic_candidates = split_candidate_lanes(
                 candidates,
-                float(profile["summary"]["average_rating"]),
-                enabled=True,
-            )
-            candidates, semantic_count = personalize_candidate_order(
-                candidates,
-                retrieval_evidence,
-                maximum_semantic_source=max(
-                    40,
-                    int(SEARCH_DEPTHS[depth]["analysis_limit"]) // 2,
-                ),
-            )
-            pre_quota_metrics = _retrieval_metrics(
-                candidates,
-                targets,
-                budgets=budgets,
-            )
-            candidates = quota_candidate_order(candidates)
-            _update_trace_ranks(candidates, diagnostics)
-            diagnostics["semantic_retrieval_candidates"] = semantic_count
-            diagnostics["retrieval_bucket_counts_at_300"] = (
-                retrieval_bucket_counts(candidates, 300)
-            )
-            metrics = evaluate_vivier_pool(
-                candidates,
-                targets,
-                budgets=budgets,
+                start_date=start_date,
+                end_date=window.test_end,
             )
             eligible_targets = [
                 target
                 for target in targets
                 if _within_period(target, start_date, window.test_end)
             ]
+            classic_targets = [
+                target
+                for target in targets
+                if not _within_period(target, start_date, window.test_end)
+            ]
+            pre_semantic_metrics = _retrieval_metrics(
+                recent_candidates,
+                targets,
+                budgets=budgets,
+            )
+            eligible_pre_semantic_metrics = _retrieval_metrics(
+                recent_candidates,
+                eligible_targets,
+                budgets=budgets,
+            )
+            retrieval_evidence = semantic_evidence(
+                snapshot,
+                candidates,
+                float(profile["summary"]["average_rating"]),
+                enabled=True,
+            )
+            recent_candidates, semantic_count = personalize_candidate_order(
+                recent_candidates,
+                retrieval_evidence,
+                maximum_semantic_source=max(
+                    40,
+                    int(SEARCH_DEPTHS[depth]["analysis_limit"]) // 2,
+                ),
+            )
+            classic_candidates, classic_semantic_count = (
+                personalize_candidate_order(
+                    classic_candidates,
+                    retrieval_evidence,
+                    maximum_semantic_source=max(
+                        20,
+                        int(
+                            SEARCH_DEPTHS[depth]["classic_analysis_limit"]
+                        )
+                        // 2,
+                    ),
+                )
+            )
+            pre_quota_metrics = _retrieval_metrics(
+                recent_candidates,
+                targets,
+                budgets=budgets,
+            )
+            eligible_pre_quota_metrics = _retrieval_metrics(
+                recent_candidates,
+                eligible_targets,
+                budgets=budgets,
+            )
+            recent_candidates = quota_candidate_order(recent_candidates)
+            _update_trace_lanes(
+                recent_candidates,
+                classic_candidates,
+                diagnostics,
+            )
+            diagnostics["semantic_retrieval_candidates"] = semantic_count
+            diagnostics["semantic_classic_candidates"] = (
+                classic_semantic_count
+            )
+            diagnostics["recent_lane_candidates"] = len(recent_candidates)
+            diagnostics["classic_lane_candidates"] = len(classic_candidates)
+            diagnostics["retrieval_bucket_counts_at_300"] = (
+                retrieval_bucket_counts(recent_candidates, 300)
+            )
+            metrics = evaluate_vivier_pool(
+                recent_candidates,
+                targets,
+                budgets=budgets,
+            )
             reports.append(
                 {
                     "manifest": window_manifest(
@@ -526,10 +657,22 @@ def run_vivier_audit(
                     "source_counts": source_counts,
                     "pool_diagnostics": diagnostics,
                     "metrics": metrics,
+                    "pre_semantic_metrics": pre_semantic_metrics,
                     "pre_quota_metrics": pre_quota_metrics,
+                    "eligible_pre_semantic_metrics": (
+                        eligible_pre_semantic_metrics
+                    ),
+                    "eligible_pre_quota_metrics": (
+                        eligible_pre_quota_metrics
+                    ),
                     "eligible_period_metrics": _retrieval_metrics(
-                        candidates,
+                        recent_candidates,
                         eligible_targets,
+                        budgets=budgets,
+                    ),
+                    "classic_metrics": _retrieval_metrics(
+                        classic_candidates,
+                        classic_targets,
                         budgets=budgets,
                     ),
                     "missing_traces": _missing_traces(
@@ -569,7 +712,10 @@ def run_vivier_audit(
             "release_period_years": period_years,
             "ranking_excluded": True,
             "semantic_retrieval_included": True,
+            "semantic_is_ordering_signal_only": True,
             "retrieval_quota_order_included": True,
+            "strict_release_period": True,
+            "classic_lane_separate": True,
             "genre_exclusions_disabled": True,
             "back_catalogue_enabled": True,
             "source_ablation": (

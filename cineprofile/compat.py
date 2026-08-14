@@ -4,7 +4,7 @@ from types import ModuleType
 from typing import Any
 
 
-EXPECTED_RECOMMENDATION_PROTOCOL = 15
+EXPECTED_RECOMMENDATION_PROTOCOL = 16
 
 
 class CineProfileVersionMismatch(RuntimeError):

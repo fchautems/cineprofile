@@ -330,10 +330,28 @@ def personalize_candidate_order(
         max(30, len(candidates) // 3),
         len(usable),
     )
-    for _, candidate in usable[:semantic_count]:
-        if SOURCE_SEMANTIC not in candidate.get("_sources", []):
-            candidate.setdefault("_sources", []).append(SOURCE_SEMANTIC)
+    # Semantic similarity is an ordering signal, not an acquisition source.
+    # It sorts candidates inside their real source buckets without granting
+    # extra turns that could displace stronger public candidates globally.
     return balanced_candidate_order(candidates), semantic_count
+
+
+def split_candidate_lanes(
+    candidates: list[dict],
+    *,
+    start_date: str | None,
+    end_date: str | None,
+) -> tuple[list[dict], list[dict]]:
+    """Keep the selected period strict and isolate older discoveries."""
+
+    recent: list[dict] = []
+    classics: list[dict] = []
+    for candidate in candidates:
+        if passes_date_filter(candidate, start_date, end_date):
+            recent.append(candidate)
+        elif SOURCE_BACK_CATALOG in candidate.get("_sources", []):
+            classics.append(candidate)
+    return recent, classics
 
 
 def balanced_candidate_order(candidates: list[dict]) -> list[dict]:

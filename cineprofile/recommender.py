@@ -10,8 +10,8 @@ import numpy as np
 
 from . import __version__
 from .candidate_pool import (
+    SOURCE_BACK_CATALOG,
     SOURCE_POPULARITY,
-    SOURCE_SEMANTIC,
     build_candidate_pool,
     favorite_seeds as _favorite_seeds,  # noqa: F401
     passes_date_filter as _passes_date_filter,  # noqa: F401
@@ -19,6 +19,7 @@ from .candidate_pool import (
     quota_candidate_order,
     retrieval_bucket_counts,
     selected_source_counts,
+    split_candidate_lanes,
     vote_threshold as _vote_threshold,  # noqa: F401
 )
 from .db import connect, initialize, transaction
@@ -42,7 +43,7 @@ from .tmdb import TmdbClient, enrich_candidates
 from .watch_interest import score_watch_interest
 
 
-RECOMMENDATION_PROTOCOL = 15
+RECOMMENDATION_PROTOCOL = 16
 PERSONAL_RANKER_VERSION = "cineprofile-local-ranker-0.11.0"
 LOCAL_NEIGHBOR_WEIGHT = 0.65
 GLOBAL_MODEL_WEIGHT = 0.35
@@ -88,6 +89,7 @@ SEARCH_DEPTHS = {
         "keyword_count": 4,
         "genre_count": 2,
         "analysis_limit": 140,
+        "classic_analysis_limit": 50,
     },
     "Normale": {
         "discover_pages": 8,
@@ -102,6 +104,7 @@ SEARCH_DEPTHS = {
         "keyword_count": 10,
         "genre_count": 5,
         "analysis_limit": 300,
+        "classic_analysis_limit": 100,
     },
     "Approfondie": {
         "discover_pages": 12,
@@ -116,6 +119,7 @@ SEARCH_DEPTHS = {
         "keyword_count": 18,
         "genre_count": 8,
         "analysis_limit": 500,
+        "classic_analysis_limit": 150,
     },
 }
 
@@ -982,6 +986,12 @@ def score_candidates(
                     else None
                 ),
                 "sources": candidate.get("_sources", []),
+                "recommendation_lane": (
+                    "classics"
+                    if SOURCE_BACK_CATALOG
+                    in candidate.get("_sources", [])
+                    else "recent"
+                ),
                 "retrieval_score": candidate.get("_retrieval_score"),
                 "retrieval_confidence": candidate.get(
                     "_retrieval_confidence"
@@ -1121,6 +1131,7 @@ def _enrich_cached(
                 "_retrieval_score",
                 "_retrieval_confidence",
                 "_retrieval_utility",
+                "_recommendation_lane",
             ):
                 details[key] = source.get(key)
             enriched.append(details)
@@ -1165,6 +1176,7 @@ def _enrich_cached(
             "_retrieval_score",
             "_retrieval_confidence",
             "_retrieval_utility",
+            "_recommendation_lane",
         ):
             details[key] = candidate.get(key)
         enriched.append(details)
@@ -1287,33 +1299,59 @@ def recommend_movies(
         if int(candidate["id"]) not in excluded_feedback
     ]
     limit = analysis_limit or SEARCH_DEPTHS[depth]["analysis_limit"]
+    recent_unseen, classic_unseen = split_candidate_lanes(
+        unseen,
+        start_date=start_date,
+        end_date=end_date,
+    )
     retrieval_evidence = semantic_evidence(
         database,
         unseen,
         float(profile["summary"]["average_rating"]),
         enabled=semantic_enabled,
     )
-    unseen, semantic_source_count = personalize_candidate_order(
-        unseen,
+    recent_unseen, recent_semantic_count = personalize_candidate_order(
+        recent_unseen,
         retrieval_evidence,
         maximum_semantic_source=max(40, limit // 2),
     )
-    if semantic_source_count:
-        source_counts[SOURCE_SEMANTIC] = semantic_source_count
-    unseen = quota_candidate_order(unseen)
-    analysis_source_counts = selected_source_counts(unseen, limit)
-    analysis_bucket_counts = retrieval_bucket_counts(unseen, limit)
-    selected_candidates = unseen[:limit]
+    classic_limit = int(SEARCH_DEPTHS[depth]["classic_analysis_limit"])
+    classic_unseen, classic_semantic_count = personalize_candidate_order(
+        classic_unseen,
+        retrieval_evidence,
+        maximum_semantic_source=max(20, classic_limit // 2),
+    )
+    recent_unseen = quota_candidate_order(recent_unseen)
+    for candidate in recent_unseen:
+        candidate["_recommendation_lane"] = "recent"
+    for candidate in classic_unseen:
+        candidate["_recommendation_lane"] = "classics"
+    analysis_source_counts = selected_source_counts(recent_unseen, limit)
+    classic_source_counts = selected_source_counts(
+        classic_unseen,
+        classic_limit,
+    )
+    analysis_bucket_counts = retrieval_bucket_counts(recent_unseen, limit)
+    selected_candidates = recent_unseen[:limit]
     popularity_only_selected = sum(
         candidate.get("_sources") == [SOURCE_POPULARITY]
         for candidate in selected_candidates
     )
-    enriched, cache_hits, downloaded = _enrich_cached(
+    enriched_recent, recent_cache_hits, recent_downloaded = _enrich_cached(
         client,
-        unseen,
+        recent_unseen,
         database,
         limit=limit,
     )
+    enriched_classics, classic_cache_hits, classic_downloaded = _enrich_cached(
+        client,
+        classic_unseen,
+        database,
+        limit=classic_limit,
+    )
+    enriched = enriched_recent + enriched_classics
+    cache_hits = recent_cache_hits + classic_cache_hits
+    downloaded = recent_downloaded + classic_downloaded
     unseen_enriched = [
         item
         for item in enriched
@@ -1351,10 +1389,21 @@ def recommend_movies(
         **pool_diagnostics,
         "excluded_already_seen_tmdb": len(candidates) - len(not_seen_on_tmdb),
         "excluded_by_feedback": len(not_seen_on_tmdb) - len(unseen),
-        "selected_for_enrichment": min(len(unseen), limit),
+        "selected_for_enrichment": (
+            min(len(recent_unseen), limit)
+            + min(len(classic_unseen), classic_limit)
+        ),
+        "selected_recent_for_enrichment": min(len(recent_unseen), limit),
+        "selected_classics_for_enrichment": min(
+            len(classic_unseen),
+            classic_limit,
+        ),
         "selected_source_counts": analysis_source_counts,
+        "selected_classic_source_counts": classic_source_counts,
         "selected_retrieval_buckets": analysis_bucket_counts,
-        "semantic_retrieval_candidates": semantic_source_count,
+        "semantic_retrieval_candidates": recent_semantic_count,
+        "semantic_classic_candidates": classic_semantic_count,
+        "classic_analysis_limit": classic_limit,
         "popularity_only_selected": popularity_only_selected,
         "popularity_only_selected_share": round(
             popularity_only_selected / max(1, len(selected_candidates)),

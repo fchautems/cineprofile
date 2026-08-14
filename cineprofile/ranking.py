@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Final
 
+from .candidate_pool import SOURCE_BACK_CATALOG
+
 
 RANKING_MODES = {
     "Valeurs sûres": {
@@ -33,6 +35,7 @@ RANKING_MODES = {
 
 SAFE_LIST_LABEL: Final = "Valeurs sûres"
 DISCOVERY_LIST_LABEL: Final = "Découvertes pour toi"
+CLASSIC_LIST_LABEL: Final = "Classiques à découvrir"
 SAFE_TOP_EXCLUDED_FROM_DISCOVERIES: Final = 10
 SAFE_PUBLIC_WEIGHT: Final = 0.70
 SAFE_RECOMMENDATION_WEIGHT: Final = 0.15
@@ -233,6 +236,18 @@ def rank_safe_recommendations(rows: Iterable[dict]) -> list[dict]:
     return ranked
 
 
+def rank_classic_recommendations(rows: Iterable[dict]) -> list[dict]:
+    """Use the public-safe order for the independent classic lane."""
+
+    ranked = rank_safe_recommendations(rows)
+    for index, row in enumerate(ranked, start=1):
+        row["recommended_rank"] = index
+        row["classic_rank"] = index
+        row["ranking_mode"] = CLASSIC_LIST_LABEL
+        row["recommendation_view"] = "classics"
+    return ranked
+
+
 def rank_discovery_recommendations(
     rows: Iterable[dict],
     *,
@@ -316,22 +331,31 @@ def build_recommendation_lists(
     *,
     safe_exclusion_count: int = SAFE_TOP_EXCLUDED_FROM_DISCOVERIES,
 ) -> dict[str, list[dict]]:
-    """Build both UI lists from one scored candidate set."""
+    """Build recent lists and the independent older-catalogue list."""
 
     source = [dict(row) for row in rows]
-    safe = rank_safe_recommendations(source)
+    def is_classic(row: dict) -> bool:
+        return (
+            row.get("recommendation_lane") == "classics"
+            or SOURCE_BACK_CATALOG in row.get("sources", [])
+        )
+
+    recent = [row for row in source if not is_classic(row)]
+    classic_source = [row for row in source if is_classic(row)]
+    safe = rank_safe_recommendations(recent)
     excluded_ids = {
         int(row["tmdb_id"])
         for row in safe[: max(0, safe_exclusion_count)]
         if row.get("tmdb_id") is not None
     }
     discoveries = rank_discovery_recommendations(
-        source,
+        recent,
         excluded_tmdb_ids=excluded_ids,
     )
     return {
         "safe": safe,
         "discovery": discoveries,
+        "classics": rank_classic_recommendations(classic_source),
     }
 
 

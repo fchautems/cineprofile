@@ -63,17 +63,28 @@ def _render_recommendation_list(
     diagnostic_download_name: str | None,
     radarr_config: dict | None,
 ) -> None:
-    is_safe = view == "safe"
+    is_classic = view == "classics"
+    is_safe = view in {"safe", "classics"}
     key_prefix = f"recommendation_{view}"
     if not recommendations:
         st.info(
-            "Aucune découverte distincte n’est disponible dans ce vivier."
-            if not is_safe
-            else "Aucune valeur sûre n’est disponible dans ce vivier."
+            "Aucun classique distinct n’est disponible dans cette réserve."
+            if is_classic
+            else (
+                "Aucune découverte distincte n’est disponible dans ce vivier."
+                if not is_safe
+                else "Aucune valeur sûre n’est disponible dans ce vivier."
+            )
         )
         return
 
-    if is_safe:
+    if is_classic:
+        st.caption(
+            "Cette liste contient uniquement des films antérieurs à la "
+            "période choisie. Elle possède son propre budget d’analyse et "
+            "ne retire aucune place aux suggestions récentes."
+        )
+    elif is_safe:
         st.caption(
             "La qualité publique reste dominante, avec un garde-fou personnel "
             "pour écarter du haut de la liste les films qui ne te donnent "
@@ -412,12 +423,13 @@ def render_recommendations_tab(
 ) -> None:
     st.subheader("Suggestions")
     st.write(
-        "Une seule recherche produit maintenant deux listes complémentaires : "
+        "Une seule recherche produit deux listes récentes complémentaires : "
         "les valeurs sûres privilégient les films publics solides qui restent "
         "compatibles avec toi, tandis que les découvertes explorent plus "
-        "librement ton profil et la proximité des histoires."
+        "librement ton profil et la proximité des histoires. Les films plus "
+        "anciens restent dans une troisième liste séparée."
     )
-    with st.expander("Comprendre les deux listes", expanded=False):
+    with st.expander("Comprendre les trois listes", expanded=False):
         st.markdown(
             """
             **Valeurs sûres** garde la note publique corrigée comme signal
@@ -451,6 +463,10 @@ def render_recommendations_tab(
 
             TMDB intervient seulement pour écarter les fiches trop fragiles et,
             dans les découvertes, comme petit garde-fou de qualité.
+
+            **Classiques à découvrir** reprend les films antérieurs à la
+            période choisie dans une réserve et un budget indépendants. Un
+            classique ne peut donc plus prendre la place d’une sortie récente.
             """
         )
     _restore_saved_selection(database, profile)
@@ -530,12 +546,12 @@ def render_recommendations_tab(
                 for name in excluded_genre_names
             }
             include_back_catalogue = st.checkbox(
-                "Ajouter aussi un catalogue plus ancien",
+                "Préparer aussi « Classiques à découvrir »",
                 value=True,
                 help=(
-                    "Ajoute une réserve locale de films antérieurs à la "
-                    "période choisie. Sa construction est plus longue une "
-                    "seule fois, puis elle est réutilisée."
+                    "Construit une liste séparée de films antérieurs à la "
+                    "période choisie. Elle ne consomme aucune place du budget "
+                    "des suggestions récentes."
                 ),
             )
             custom_budget = st.checkbox("Personnaliser le budget d’analyse")
@@ -642,6 +658,7 @@ def render_recommendations_tab(
                 ).isoformat()
                 st.session_state["visible_results_count_safe"] = 20
                 st.session_state["visible_results_count_discovery"] = 20
+                st.session_state["visible_results_count_classics"] = 20
 
         recommendations = st.session_state.get("recommendations", [])
         recommendation_lists = st.session_state.get("recommendation_lists")
@@ -684,6 +701,14 @@ def render_recommendations_tab(
                     "· candidats issus uniquement de la popularité : "
                     f"{100 * float(diagnostics.get('popularity_only_selected_share', 0)):.0f}%."
                 )
+                if diagnostics.get("selected_classics_for_enrichment"):
+                    st.caption(
+                        "Budgets indépendants : "
+                        f"{int(diagnostics.get('selected_recent_for_enrichment', 0))} "
+                        "films récents · "
+                        f"{int(diagnostics.get('selected_classics_for_enrichment', 0))} "
+                        "classiques."
+                    )
                 st.dataframe(
                     pd.DataFrame(
                         [
@@ -801,11 +826,15 @@ def render_recommendations_tab(
                     )
 
         if recommendation_lists:
-            safe_tab, discovery_tab = st.tabs(
-                ["✅ Valeurs sûres", "✨ Découvertes pour toi"],
+            tab_labels = ["✅ Valeurs sûres", "✨ Découvertes pour toi"]
+            if recommendation_lists.get("classics"):
+                tab_labels.append("🎞 Classiques à découvrir")
+            recommendation_tabs = st.tabs(
+                tab_labels,
                 key="recommendation_view",
                 on_change="rerun",
             )
+            safe_tab, discovery_tab = recommendation_tabs[:2]
             with safe_tab:
                 if safe_tab.open:
                     _render_recommendation_list(
@@ -818,6 +847,24 @@ def render_recommendations_tab(
                         diagnostic_download_name=diagnostic_download_name,
                         radarr_config=radarr_config,
                     )
+            if len(recommendation_tabs) == 3:
+                classic_tab = recommendation_tabs[2]
+                with classic_tab:
+                    if classic_tab.open:
+                        _render_recommendation_list(
+                            database,
+                            view="classics",
+                            recommendations=recommendation_lists.get(
+                                "classics", []
+                            ),
+                            all_recommendations=recommendations,
+                            diagnostics=diagnostics,
+                            diagnostic_download_payload=(
+                                diagnostic_download_payload
+                            ),
+                            diagnostic_download_name=diagnostic_download_name,
+                            radarr_config=radarr_config,
+                        )
             with discovery_tab:
                 if discovery_tab.open:
                     _render_recommendation_list(

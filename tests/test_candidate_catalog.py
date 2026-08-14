@@ -13,6 +13,7 @@ from cineprofile.candidate_pool import (
     quota_candidate_order,
     retrieval_bucket,
     retrieval_bucket_counts,
+    split_candidate_lanes,
 )
 from cineprofile.db import connect, initialize
 from cineprofile.tmdb import TmdbClient
@@ -25,6 +26,28 @@ def test_recent_period_is_split_by_calendar_year() -> None:
         ("2025-01-01", "2025-12-31"),
         ("2026-01-01", "2026-08-14"),
     ]
+
+
+def test_selected_period_and_classic_lane_are_strictly_separated() -> None:
+    recent_movie = {
+        "id": 2025,
+        "release_date": "2025-06-01",
+        "_sources": [SOURCE_POPULARITY],
+    }
+    classic_movie = {
+        "id": 1940,
+        "release_date": "1940-10-15",
+        "_sources": [SOURCE_BACK_CATALOG],
+    }
+
+    recent, classics = split_candidate_lanes(
+        [classic_movie, recent_movie],
+        start_date="2023-08-14",
+        end_date="2026-08-14",
+    )
+
+    assert recent == [recent_movie]
+    assert classics == [classic_movie]
 
 
 def test_retrieval_quota_protects_each_candidate_family() -> None:

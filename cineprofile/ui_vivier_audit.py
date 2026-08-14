@@ -36,20 +36,19 @@ def _load_report(path: Path) -> dict | None:
 def _render_report(path: Path, payload: dict) -> None:
     summary = payload.get("summary") or {}
     comparison = payload.get("comparison_with_previous") or {}
-    recall_deltas = comparison.get("recall_point_deltas") or {}
     eligible_deltas = comparison.get("eligible_recall_point_deltas") or {}
     metric_columns = st.columns(4)
     metric_columns[0].metric(
-        "Films 8+ mesurables",
-        int(summary.get("measurable_liked_films") or 0),
+        "Films 8+ dans la période",
+        int(summary.get("eligible_in_default_period") or 0),
     )
     for column, budget in zip(metric_columns[1:], (100, 300, 500), strict=True):
         column.metric(
-            f"Rappel à {budget}",
-            _percentage(summary.get(f"recall_at_{budget}")),
+            f"Rappel période à {budget}",
+            _percentage(summary.get(f"eligible_recall_at_{budget}")),
             delta=(
-                f"{float(recall_deltas[str(budget)]):+.1f} points"
-                if str(budget) in recall_deltas
+                f"{float(eligible_deltas[str(budget)]):+.1f} points"
+                if str(budget) in eligible_deltas
                 else None
             ),
         )
@@ -64,26 +63,33 @@ def _render_report(path: Path, payload: dict) -> None:
                 "réel : les écarts avec l’ancien rapport sont indicatifs."
             )
     st.caption(
-        "Parmi les films 8+ réellement sortis dans la période par défaut : "
-        + " · ".join(
-            (
-                f"@{budget} "
-                f"{_percentage(summary.get(f'eligible_recall_at_{budget}'))}"
-                + (
-                    f" ({float(eligible_deltas[str(budget)]):+.1f} points)"
-                    if str(budget) in eligible_deltas
-                    else ""
-                )
-            )
-            for budget in (100, 300, 500)
-        )
+        "La liste normale respecte strictement la période choisie. Le "
+        "catalogue plus ancien est mesuré séparément et ne consomme aucune "
+        "de ces places."
     )
-    quota_gain = summary.get("quota_gain_at_300")
-    if quota_gain is not None:
+    eligible_total = int(summary.get("eligible_in_default_period") or 0)
+    eligible_present = int(summary.get("eligible_present_anywhere") or 0)
+    if eligible_total:
         st.caption(
-            "Réservation des places à 300 : "
-            f"{int(quota_gain):+d} film(s) 8+ par rapport au même vivier "
-            "sans quotas."
+            "Plafond actuel du vivier récent : "
+            f"{eligible_present}/{eligible_total} film(s) 8+ présent(s) "
+            "quelque part avant la limite d’analyse."
+        )
+    semantic_gain = summary.get("eligible_semantic_gain_at_300")
+    quota_gain = summary.get("eligible_quota_gain_at_300")
+    if semantic_gain is not None and quota_gain is not None:
+        st.caption(
+            "Effet exact à 300 sur les films de la période : "
+            f"sémantique {int(semantic_gain):+d} · "
+            f"quotas {int(quota_gain):+d}."
+        )
+    classic_target_count = int(summary.get("classic_target_count") or 0)
+    if classic_target_count:
+        st.caption(
+            "Voie Classiques à découvrir : "
+            f"{int(summary.get('classic_hits_at_100') or 0)}/"
+            f"{classic_target_count} film(s) ancien(s) retrouvé(s) dans son "
+            "budget normal de 100."
         )
 
     ablation = summary.get("source_ablation") or []
@@ -124,6 +130,7 @@ def _render_report(path: Path, payload: dict) -> None:
         labels = {
             "absent_from_all_sources": "Absent de toutes les sources",
             "outside_release_window": "Hors période de sortie",
+            "classic_lane": "Présent dans Classiques à découvrir",
             "insufficient_votes": "Pas assez de votes",
             "excluded_genre": "Genre exclu",
             "beyond_analysis_budget": "Présent après la 500e place",

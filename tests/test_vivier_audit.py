@@ -225,6 +225,11 @@ def test_vivier_audit_uses_chronological_snapshots_and_keeps_source(
     # candidate ranks, just like the production recommendation path.
     assert payload["summary"]["recall_at_100"] == 1.0
     assert payload["summary"]["recall_at_300"] == 1.0
+    assert payload["audit_version"] == "cineprofile-vivier-audit-1.3"
+    assert payload["methodology"]["strict_release_period"]
+    assert payload["methodology"]["classic_lane_separate"]
+    assert "eligible_semantic_gain_at_300" in payload["summary"]
+    assert "eligible_quota_gain_at_300" in payload["summary"]
     assert vivier_audit_report_path(database, payload).is_file()
 
     repeated = run_vivier_audit(
