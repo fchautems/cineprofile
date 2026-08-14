@@ -35,6 +35,9 @@ def _load_report(path: Path) -> dict | None:
 
 def _render_report(path: Path, payload: dict) -> None:
     summary = payload.get("summary") or {}
+    comparison = payload.get("comparison_with_previous") or {}
+    recall_deltas = comparison.get("recall_point_deltas") or {}
+    eligible_deltas = comparison.get("eligible_recall_point_deltas") or {}
     metric_columns = st.columns(4)
     metric_columns[0].metric(
         "Films 8+ mesurables",
@@ -44,11 +47,29 @@ def _render_report(path: Path, payload: dict) -> None:
         column.metric(
             f"Rappel à {budget}",
             _percentage(summary.get(f"recall_at_{budget}")),
+            delta=(
+                f"{float(recall_deltas[str(budget)]):+.1f} points"
+                if str(budget) in recall_deltas
+                else None
+            ),
+        )
+    if comparison:
+        st.caption(
+            "Comparaison avec CineProfile "
+            f"{comparison.get('previous_app_version') or 'précédent'}."
         )
     st.caption(
         "Parmi les films 8+ réellement sortis dans la période par défaut : "
         + " · ".join(
-            f"@{budget} {_percentage(summary.get(f'eligible_recall_at_{budget}'))}"
+            (
+                f"@{budget} "
+                f"{_percentage(summary.get(f'eligible_recall_at_{budget}'))}"
+                + (
+                    f" ({float(eligible_deltas[str(budget)]):+.1f} points)"
+                    if str(budget) in eligible_deltas
+                    else ""
+                )
+            )
             for budget in (100, 300, 500)
         )
     )

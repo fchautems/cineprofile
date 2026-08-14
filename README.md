@@ -1,6 +1,6 @@
 # CineProfile
 
-Version actuelle : **0.14.0**. L’écran permanent **Ma liste** rassemble les
+Version actuelle : **0.15.0**. L’écran permanent **Ma liste** rassemble les
 films marqués à voir, écartés, vus et envoyés à Radarr. Les décisions se font
 directement sur les cartes, sont réversibles, et restent visibles dans la liste.
 
@@ -16,6 +16,27 @@ réutilisables :
 
 Le CSV n’est donc pas le modèle : c’est l’historique initial. La base enrichie
 devient la mémoire durable de l’outil.
+
+## Mise à jour 0.15.0 — élargir et conserver le vivier
+
+Le vivier public est désormais recherché par périodes courtes plutôt qu’avec
+une seule liste globale où les années les plus populaires masquaient les
+autres. La recherche TMDB reste mondiale : la région suisse sert à afficher la
+disponibilité, mais n’exclut plus un film simplement parce que TMDB ne connaît
+pas sa date de sortie suisse.
+
+Une option activée par défaut ajoute un **catalogue public plus ancien** aux
+sorties de la période choisie. Les résultats bruts de chaque source et de chaque
+période sont conservés dans SQLite pendant 45 jours, ou 180 jours pour le fonds
+de catalogue. La première construction est donc plus longue ; les suivantes
+réutilisent la réserve locale au lieu de refaire les mêmes appels.
+
+À partir du rapport réel 0.14.0, l’ordre du vivier donne davantage de place aux
+sources publiques qui retrouvaient effectivement les films 8+. L’endpoint
+« films similaires » est désactivé dans les trois profondeurs : il avait produit
+1 080 candidats sans retrouver un seul film cible. Le classement final et ses
+scores restent inchangés. Un nouvel audit compare automatiquement son rappel
+avec le rapport précédent.
 
 ## Mise à jour 0.14.0 — mesurer le vivier avant de le modifier
 

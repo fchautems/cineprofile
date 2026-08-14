@@ -4,6 +4,13 @@ from datetime import date
 from pathlib import Path
 from typing import Callable
 
+from .candidate_catalog import (
+    BACK_CATALOG_CACHE_DAYS,
+    back_catalog_segments,
+    cached_discover,
+    cached_seed_movies,
+    date_segments,
+)
 from .db import connect
 from .media_types import is_series_type
 from .public_rating import best_public_rating
@@ -19,18 +26,33 @@ SOURCE_CREATORS = "Réalisateurs et scénaristes appréciés"
 SOURCE_ACTORS = "Acteurs principaux appréciés"
 SOURCE_KEYWORDS = "Thèmes appréciés"
 SOURCE_GENRES = "Genres appréciés"
+SOURCE_BACK_CATALOG = "Catalogue public plus ancien"
 
 SOURCE_PRIORITY = (
-    SOURCE_FAVORITES,
-    SOURCE_SIMILAR,
     SOURCE_SEMANTIC,
-    SOURCE_CREATORS,
-    SOURCE_KEYWORDS,
-    SOURCE_QUALITY,
     SOURCE_POPULARITY,
-    SOURCE_GENRES,
+    SOURCE_QUALITY,
+    SOURCE_BACK_CATALOG,
+    SOURCE_KEYWORDS,
     SOURCE_ACTORS,
+    SOURCE_FAVORITES,
+    SOURCE_CREATORS,
+    SOURCE_GENRES,
+    SOURCE_SIMILAR,
 )
+
+SOURCE_WEIGHTS = {
+    SOURCE_SEMANTIC: 2,
+    SOURCE_POPULARITY: 4,
+    SOURCE_QUALITY: 2,
+    SOURCE_BACK_CATALOG: 2,
+    SOURCE_KEYWORDS: 1,
+    SOURCE_ACTORS: 1,
+    SOURCE_FAVORITES: 1,
+    SOURCE_CREATORS: 1,
+    SOURCE_GENRES: 1,
+    SOURCE_SIMILAR: 1,
+}
 
 
 def vote_threshold(release_date: str | None, reliability: str) -> int:
@@ -326,15 +348,16 @@ def balanced_candidate_order(candidates: list[dict]) -> list[dict]:
         added = False
         for source in SOURCE_PRIORITY:
             bucket = buckets[source]
-            while bucket and int(bucket[0]["id"]) in selected_ids:
-                bucket.pop(0)
-            if not bucket:
-                continue
-            candidate = bucket.pop(0)
-            candidate_id = int(candidate["id"])
-            selected.append(candidate)
-            selected_ids.add(candidate_id)
-            added = True
+            for _ in range(SOURCE_WEIGHTS.get(source, 1)):
+                while bucket and int(bucket[0]["id"]) in selected_ids:
+                    bucket.pop(0)
+                if not bucket:
+                    break
+                candidate = bucket.pop(0)
+                candidate_id = int(candidate["id"])
+                selected.append(candidate)
+                selected_ids.add(candidate_id)
+                added = True
         if not added:
             break
     leftovers = [
@@ -369,53 +392,120 @@ def build_candidate_pool(
     excluded_genre_ids: set[int] | None,
     excluded_genre: Callable[[dict, set[int] | None], bool],
     trace_ids: set[int] | None = None,
+    include_back_catalogue: bool = False,
 ) -> tuple[list[dict], dict[str, int], dict[str, object]]:
     pool: dict[int, dict] = {}
     source_counts: dict[str, int] = {}
+    reused_scans: dict[str, int] = {}
+    downloaded_scans: dict[str, int] = {}
 
     def add(source: str, items: list[dict]) -> None:
         source_counts[source] = source_counts.get(source, 0) + len(items)
         for candidate in items:
             merge_candidate(pool, candidate, source)
 
-    add(
-        SOURCE_POPULARITY,
-        client.discover_recent_movies(
-            start_date,
-            end_date,
-            pages=settings["discover_pages"],
-            min_votes=0,
-        ),
-    )
-    if settings.get("quality_pages", 0):
-        add(
-            SOURCE_QUALITY,
-            client.discover_recent_movies(
-                start_date,
-                end_date,
-                pages=settings["quality_pages"],
-                min_votes=vote_threshold(end_date, reliability),
-                sort_by="vote_average.desc",
+    def add_cached(source: str, batch) -> None:
+        target = reused_scans if batch.cache_hit else downloaded_scans
+        target[source] = target.get(source, 0) + 1
+        add(source, batch.items)
+
+    for segment_start, segment_end in date_segments(start_date, end_date):
+        add_cached(
+            SOURCE_POPULARITY,
+            cached_discover(
+                client,
+                database,
+                source=SOURCE_POPULARITY,
+                start_date=segment_start,
+                end_date=segment_end,
+                pages=settings["discover_pages"],
+                min_votes=0,
             ),
         )
-
-    seed_errors = 0
-    seeds = favorite_seeds(database, settings["seed_count"])
-    for seed in seeds:
-        try:
-            add(
-                SOURCE_FAVORITES,
-                client.movie_recommendations(
-                    seed,
-                    pages=int(settings.get("recommendation_pages", 1)),
+        if settings.get("quality_pages", 0):
+            add_cached(
+                SOURCE_QUALITY,
+                cached_discover(
+                    client,
+                    database,
+                    source=SOURCE_QUALITY,
+                    start_date=segment_start,
+                    end_date=segment_end,
+                    pages=settings["quality_pages"],
+                    min_votes=vote_threshold(segment_end, reliability),
+                    sort_by="vote_average.desc",
                 ),
             )
-            if hasattr(client, "movie_similar"):
-                add(
+
+    if include_back_catalogue and start_date:
+        for segment_start, segment_end in back_catalog_segments(start_date):
+            older: list[dict] = []
+            for pages, sort_by in (
+                (
+                    int(settings.get("catalogue_popularity_pages", 1)),
+                    "popularity.desc",
+                ),
+                (
+                    int(settings.get("catalogue_quality_pages", 2)),
+                    "vote_average.desc",
+                ),
+            ):
+                if pages <= 0:
+                    continue
+                batch = cached_discover(
+                    client,
+                    database,
+                    source=f"{SOURCE_BACK_CATALOG} · {sort_by}",
+                    start_date=segment_start,
+                    end_date=segment_end,
+                    pages=pages,
+                    min_votes=(
+                        0
+                        if sort_by == "popularity.desc"
+                        else vote_threshold(segment_end, reliability)
+                    ),
+                    sort_by=sort_by,
+                    ttl_days=BACK_CATALOG_CACHE_DAYS,
+                )
+                target = reused_scans if batch.cache_hit else downloaded_scans
+                target[SOURCE_BACK_CATALOG] = (
+                    target.get(SOURCE_BACK_CATALOG, 0) + 1
+                )
+                older.extend(batch.items)
+            add(
+                SOURCE_BACK_CATALOG,
+                [{**item, "_back_catalogue": True} for item in older],
+            )
+
+    # Personalized sources stay useful as challengers, but their responses are
+    # cached and the two low-yield seed endpoints no longer dominate the work.
+    seed_errors = 0
+    seeds = favorite_seeds(database, settings["seed_count"])
+    recommendation_pages = int(settings.get("recommendation_pages", 1))
+    similar_pages = int(settings.get("similar_pages", 0))
+    for seed in seeds:
+        try:
+            if recommendation_pages > 0:
+                add_cached(
+                    SOURCE_FAVORITES,
+                    cached_seed_movies(
+                        client,
+                        database,
+                        source=SOURCE_FAVORITES,
+                        tmdb_id=seed,
+                        pages=recommendation_pages,
+                    ),
+                )
+            if similar_pages > 0 and hasattr(client, "movie_similar"):
+                add_cached(
                     SOURCE_SIMILAR,
-                    client.movie_similar(
-                        seed,
-                        pages=int(settings.get("similar_pages", 1)),
+                    cached_seed_movies(
+                        client,
+                        database,
+                        source=SOURCE_SIMILAR,
+                        tmdb_id=seed,
+                        pages=similar_pages,
+                        method="movie_similar",
                     ),
                 )
         except TmdbError as exc:
@@ -426,69 +516,61 @@ def build_candidate_pool(
     if seed_errors:
         source_counts["Graines TMDB ignorées"] = seed_errors
 
+    def add_profile_discovery(
+        source: str,
+        *,
+        with_people: int | None = None,
+        with_keywords: int | None = None,
+        with_genres: int | None = None,
+    ) -> None:
+        add_cached(
+            source,
+            cached_discover(
+                client,
+                database,
+                source=source,
+                start_date=start_date,
+                end_date=end_date,
+                pages=1,
+                min_votes=0,
+                with_people=with_people,
+                with_keywords=with_keywords,
+                with_genres=with_genres,
+            ),
+        )
+
     creators, actors = profile_people(
         profile,
         creators_limit=settings["creator_count"],
         actors_limit=settings["actor_count"],
     )
     for person_id in creators:
-        add(
-            SOURCE_CREATORS,
-            client.discover_recent_movies(
-                start_date,
-                end_date,
-                pages=1,
-                min_votes=0,
-                with_people=person_id,
-            ),
-        )
+        add_profile_discovery(SOURCE_CREATORS, with_people=person_id)
     for person_id in actors:
-        add(
-            SOURCE_ACTORS,
-            client.discover_recent_movies(
-                start_date,
-                end_date,
-                pages=1,
-                min_votes=0,
-                with_people=person_id,
-            ),
-        )
+        add_profile_discovery(SOURCE_ACTORS, with_people=person_id)
     for keyword_id in profile_dimension_ids(
         profile,
         "keywords",
         settings["keyword_count"],
     ):
-        add(
-            SOURCE_KEYWORDS,
-            client.discover_recent_movies(
-                start_date,
-                end_date,
-                pages=1,
-                min_votes=0,
-                with_keywords=keyword_id,
-            ),
-        )
+        add_profile_discovery(SOURCE_KEYWORDS, with_keywords=keyword_id)
     for genre_id in profile_dimension_ids(
         profile,
         "genres",
         settings["genre_count"],
     ):
-        add(
-            SOURCE_GENRES,
-            client.discover_recent_movies(
-                start_date,
-                end_date,
-                pages=1,
-                min_votes=0,
-                with_genres=genre_id,
-            ),
-        )
+        add_profile_discovery(SOURCE_GENRES, with_genres=genre_id)
 
     all_candidates = list(pool.values())
     in_window = [
         candidate
         for candidate in all_candidates
         if passes_date_filter(candidate, start_date, end_date)
+        or (
+            include_back_catalogue
+            and candidate.get("_back_catalogue")
+            and passes_date_filter(candidate, None, end_date)
+        )
     ]
     reliable = [
         candidate
@@ -507,6 +589,9 @@ def build_candidate_pool(
         "excluded_insufficient_votes": len(in_window) - len(reliable),
         "excluded_genres": len(reliable) - len(filtered),
         "after_pre_enrichment_filters": len(filtered),
+        "candidate_catalog_reused_scans": reused_scans,
+        "candidate_catalog_downloaded_scans": downloaded_scans,
+        "back_catalogue_enabled": include_back_catalogue,
     }
     if trace_ids:
         in_window_ids = {int(candidate["id"]) for candidate in in_window}

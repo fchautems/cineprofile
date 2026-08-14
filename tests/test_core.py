@@ -962,7 +962,7 @@ def test_adaptive_vote_threshold_and_date_filter() -> None:
     assert not _passes_date_filter(candidate, "2023-01-01", "2025-01-01")
 
 
-def test_candidate_analysis_budget_is_balanced_across_sources() -> None:
+def test_candidate_analysis_budget_favors_measured_public_sources() -> None:
     candidates = [
         {
             "id": index,
@@ -991,8 +991,9 @@ def test_candidate_analysis_budget_is_balanced_across_sources() -> None:
 
     ordered = balanced_candidate_order(candidates)
 
-    assert ordered[0]["id"] == 101
-    assert {row["id"] for row in ordered[:4]} >= {101, 102}
+    assert [row["id"] for row in ordered[:4]] == [1, 2, 3, 4]
+    assert ordered[4]["id"] == 101
+    assert {row["id"] for row in ordered} >= {101, 102}
 
 
 def test_discovery_diversifies_without_promoting_a_much_weaker_film() -> None:

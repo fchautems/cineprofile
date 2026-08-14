@@ -8,7 +8,7 @@ from typing import Iterator
 
 
 DEFAULT_DB_PATH = Path(os.getenv("CINEPROFILE_DB", "data/cineprofile.db"))
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 class CineProfileConnection(sqlite3.Connection):
@@ -146,6 +146,29 @@ CREATE TABLE IF NOT EXISTS candidate_cache (
     PRIMARY KEY (tmdb_id, language, region)
 );
 
+CREATE TABLE IF NOT EXISTS candidate_catalog (
+    tmdb_id INTEGER NOT NULL,
+    language TEXT NOT NULL,
+    region TEXT NOT NULL,
+    release_date TEXT,
+    payload_json TEXT NOT NULL,
+    first_seen_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    PRIMARY KEY (tmdb_id, language, region)
+);
+
+CREATE TABLE IF NOT EXISTS candidate_catalog_scans (
+    scan_key TEXT PRIMARY KEY,
+    language TEXT NOT NULL,
+    region TEXT NOT NULL,
+    source TEXT NOT NULL,
+    start_date TEXT,
+    end_date TEXT,
+    candidate_ids_json TEXT NOT NULL,
+    candidate_count INTEGER NOT NULL,
+    completed_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS text_embeddings (
     item_kind TEXT NOT NULL,
     item_id TEXT NOT NULL,
@@ -234,6 +257,10 @@ CREATE INDEX IF NOT EXISTS idx_radarr_attempt_tmdb
     ON radarr_request_attempts(tmdb_id, attempted_at DESC);
 CREATE INDEX IF NOT EXISTS idx_personal_models_version
     ON personal_models(model_version, id DESC);
+CREATE INDEX IF NOT EXISTS idx_candidate_catalog_release
+    ON candidate_catalog(language, region, release_date);
+CREATE INDEX IF NOT EXISTS idx_candidate_catalog_scans_completed
+    ON candidate_catalog_scans(completed_at);
 """
 
 

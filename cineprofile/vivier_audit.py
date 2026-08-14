@@ -34,7 +34,7 @@ from .recommender import SEARCH_DEPTHS
 
 
 VIVIER_AUDIT_SCHEMA_VERSION = 1
-VIVIER_AUDIT_VERSION = "cineprofile-vivier-audit-1.0"
+VIVIER_AUDIT_VERSION = "cineprofile-vivier-audit-1.1"
 DEFAULT_BUDGETS = (100, 300, 500)
 DEFAULT_PERIOD_YEARS = 3
 ProgressCallback = Callable[[int, int, str], None]
@@ -395,6 +395,15 @@ def run_vivier_audit(
     budgets = tuple(sorted({max(1, int(value)) for value in budgets}))
     period_years = max(1, int(period_years))
     logger = configure_logging(original)
+    previous_report_path = latest_vivier_audit_report(original)
+    previous_report: dict | None = None
+    if previous_report_path is not None:
+        try:
+            previous_report = json.loads(
+                previous_report_path.read_text(encoding="utf-8")
+            )
+        except (OSError, json.JSONDecodeError):
+            previous_report = None
     fingerprint_before = _database_fingerprint(original)
     started = time.perf_counter()
     items = _rated_items(original)
@@ -442,6 +451,7 @@ def run_vivier_audit(
                 excluded_genre_ids=None,
                 excluded_genre=lambda _candidate, _excluded: False,
                 trace_ids={int(target["tmdb_id"]) for target in targets},
+                include_back_catalogue=True,
             )
             candidates = _exclude_training_history(
                 candidates,
@@ -516,6 +526,7 @@ def run_vivier_audit(
             "release_period_years": period_years,
             "ranking_excluded": True,
             "genre_exclusions_disabled": True,
+            "back_catalogue_enabled": True,
             "source_ablation": (
                 "chaque source est retirée des candidats déjà collectés, "
                 "puis l’ordre équilibré est reconstruit"
@@ -550,6 +561,45 @@ def run_vivier_audit(
         )[:20],
         "elapsed_seconds": round(time.perf_counter() - started, 3),
     }
+    if previous_report:
+        previous_summary = previous_report.get("summary") or {}
+        payload["comparison_with_previous"] = {
+            "previous_app_version": previous_report.get("app_version"),
+            "previous_created_at": previous_report.get("created_at"),
+            "recall_point_deltas": {
+                str(budget): round(
+                    100
+                    * (
+                        float(summary.get(f"recall_at_{budget}") or 0.0)
+                        - float(
+                            previous_summary.get(f"recall_at_{budget}")
+                            or 0.0
+                        )
+                    ),
+                    1,
+                )
+                for budget in budgets
+            },
+            "eligible_recall_point_deltas": {
+                str(budget): round(
+                    100
+                    * (
+                        float(
+                            summary.get(f"eligible_recall_at_{budget}")
+                            or 0.0
+                        )
+                        - float(
+                            previous_summary.get(
+                                f"eligible_recall_at_{budget}"
+                            )
+                            or 0.0
+                        )
+                    ),
+                    1,
+                )
+                for budget in budgets
+            },
+        }
     save_vivier_audit_report(original, payload)
     logger.info(
         "vivier_audit_completed | windows=%s | recall500=%s | elapsed=%s",

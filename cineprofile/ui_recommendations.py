@@ -529,6 +529,15 @@ def render_recommendations_tab(
                 TMDB_EXCLUDABLE_GENRES[name]
                 for name in excluded_genre_names
             }
+            include_back_catalogue = st.checkbox(
+                "Ajouter aussi un catalogue plus ancien",
+                value=True,
+                help=(
+                    "Ajoute une réserve locale de films antérieurs à la "
+                    "période choisie. Sa construction est plus longue une "
+                    "seule fois, puis elle est réutilisée."
+                ),
+            )
             custom_budget = st.checkbox("Personnaliser le budget d’analyse")
             analysis_limit = (
                 st.slider("Nombre maximal de fiches complètes", 50, 700, 300, 25)
@@ -603,6 +612,7 @@ def render_recommendations_tab(
                             semantic_enabled=semantic_enabled,
                             analysis_limit=analysis_limit,
                             excluded_genre_ids=excluded_genre_ids,
+                            include_back_catalogue=include_back_catalogue,
                         )
                     recommendations, diagnostics = unpack_recommendation_run(
                         recommendation_run

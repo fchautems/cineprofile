@@ -74,11 +74,13 @@ PERSON_MIN_SUPPORT = {
 
 SEARCH_DEPTHS = {
     "Rapide": {
-        "discover_pages": 6,
-        "quality_pages": 2,
-        "seed_count": 6,
+        "discover_pages": 4,
+        "quality_pages": 1,
+        "catalogue_popularity_pages": 1,
+        "catalogue_quality_pages": 1,
+        "seed_count": 3,
         "recommendation_pages": 1,
-        "similar_pages": 1,
+        "similar_pages": 0,
         "creator_count": 3,
         "actor_count": 2,
         "keyword_count": 4,
@@ -86,11 +88,13 @@ SEARCH_DEPTHS = {
         "analysis_limit": 140,
     },
     "Normale": {
-        "discover_pages": 20,
-        "quality_pages": 4,
-        "seed_count": 12,
+        "discover_pages": 8,
+        "quality_pages": 3,
+        "catalogue_popularity_pages": 1,
+        "catalogue_quality_pages": 2,
+        "seed_count": 6,
         "recommendation_pages": 1,
-        "similar_pages": 1,
+        "similar_pages": 0,
         "creator_count": 8,
         "actor_count": 4,
         "keyword_count": 10,
@@ -98,11 +102,13 @@ SEARCH_DEPTHS = {
         "analysis_limit": 300,
     },
     "Approfondie": {
-        "discover_pages": 35,
-        "quality_pages": 7,
-        "seed_count": 24,
+        "discover_pages": 12,
+        "quality_pages": 5,
+        "catalogue_popularity_pages": 2,
+        "catalogue_quality_pages": 3,
+        "seed_count": 10,
         "recommendation_pages": 2,
-        "similar_pages": 2,
+        "similar_pages": 0,
         "creator_count": 16,
         "actor_count": 8,
         "keyword_count": 18,
@@ -1051,6 +1057,7 @@ def _candidate_pool(
     depth: str,
     reliability: str,
     excluded_genre_ids: set[int] | None = None,
+    include_back_catalogue: bool = True,
 ) -> tuple[list[dict], dict[str, int], dict[str, object]]:
     return build_candidate_pool(
         client,
@@ -1062,6 +1069,7 @@ def _candidate_pool(
         reliability=reliability,
         excluded_genre_ids=excluded_genre_ids,
         excluded_genre=_has_excluded_genre,
+        include_back_catalogue=include_back_catalogue,
     )
 
 
@@ -1215,6 +1223,7 @@ def recommend_movies(
     semantic_enabled: bool = True,
     analysis_limit: int | None = None,
     excluded_genre_ids: set[int] | None = None,
+    include_back_catalogue: bool = True,
 ) -> tuple[list[dict], dict[str, object]]:
     initialize(database)
     if depth not in SEARCH_DEPTHS:
@@ -1230,6 +1239,7 @@ def recommend_movies(
         "semantic_enabled": semantic_enabled,
         "analysis_limit": analysis_limit,
         "excluded_genre_ids": sorted(excluded_genre_ids or set()),
+        "include_back_catalogue": include_back_catalogue,
     }
     logger = configure_logging(database)
     logger.info(
@@ -1246,6 +1256,7 @@ def recommend_movies(
         depth=depth,
         reliability=reliability,
         excluded_genre_ids=excluded_genre_ids,
+        include_back_catalogue=include_back_catalogue,
     )
     feedback = load_feedback(database)
     with connect(database) as connection:

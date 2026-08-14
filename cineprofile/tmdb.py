@@ -146,19 +146,24 @@ class TmdbClient:
         with_genres: int | None = None,
         with_keywords: int | None = None,
         sort_by: str = "popularity.desc",
+        regional_release_dates: bool = False,
     ) -> list[dict]:
         results: dict[int, dict] = {}
         window_start = date.fromisoformat(start_date) if start_date else None
         window_end = date.fromisoformat(end_date) if end_date else None
         for page in range(1, max(1, pages) + 1):
             parameters: dict[str, object] = {
-                "region": self.region,
                 "sort_by": sort_by,
                 "include_adult": "false",
                 "include_video": "false",
                 "vote_count.gte": min_votes,
                 "page": page,
             }
+            # `region` on TMDB Discover is a release-date filter, not merely
+            # a presentation preference. CineProfile searches globally and
+            # checks Swiss availability later, so it must stay opt-in here.
+            if regional_release_dates:
+                parameters["region"] = self.region
             if start_date:
                 parameters["primary_release_date.gte"] = start_date
             if end_date:

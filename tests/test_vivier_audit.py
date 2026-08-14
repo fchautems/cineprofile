@@ -226,3 +226,17 @@ def test_vivier_audit_uses_chronological_snapshots_and_keeps_source(
     assert payload["summary"]["recall_at_100"] == 1.0
     assert payload["summary"]["recall_at_300"] == 1.0
     assert vivier_audit_report_path(database, payload).is_file()
+
+    repeated = run_vivier_audit(
+        FakeClient(),
+        database,
+        requested_windows=2,
+        depth="Rapide",
+        reliability="Souple",
+    )
+    assert repeated["comparison_with_previous"]["previous_app_version"]
+    assert repeated["comparison_with_previous"]["recall_point_deltas"] == {
+        "100": 0.0,
+        "300": 0.0,
+        "500": 0.0,
+    }
