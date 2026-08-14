@@ -58,6 +58,11 @@ def _render_report(path: Path, payload: dict) -> None:
             "Comparaison avec CineProfile "
             f"{comparison.get('previous_app_version') or 'précédent'}."
         )
+        if not comparison.get("same_audit_version", True):
+            st.caption(
+                "Le protocole mesure maintenant l’ordre de récupération "
+                "réel : les écarts avec l’ancien rapport sont indicatifs."
+            )
     st.caption(
         "Parmi les films 8+ réellement sortis dans la période par défaut : "
         + " · ".join(
@@ -73,6 +78,13 @@ def _render_report(path: Path, payload: dict) -> None:
             for budget in (100, 300, 500)
         )
     )
+    quota_gain = summary.get("quota_gain_at_300")
+    if quota_gain is not None:
+        st.caption(
+            "Réservation des places à 300 : "
+            f"{int(quota_gain):+d} film(s) 8+ par rapport au même vivier "
+            "sans quotas."
+        )
 
     ablation = summary.get("source_ablation") or []
     if ablation:

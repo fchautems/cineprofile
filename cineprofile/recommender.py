@@ -16,6 +16,8 @@ from .candidate_pool import (
     favorite_seeds as _favorite_seeds,  # noqa: F401
     passes_date_filter as _passes_date_filter,  # noqa: F401
     personalize_candidate_order,
+    quota_candidate_order,
+    retrieval_bucket_counts,
     selected_source_counts,
     vote_threshold as _vote_threshold,  # noqa: F401
 )
@@ -40,7 +42,7 @@ from .tmdb import TmdbClient, enrich_candidates
 from .watch_interest import score_watch_interest
 
 
-RECOMMENDATION_PROTOCOL = 14
+RECOMMENDATION_PROTOCOL = 15
 PERSONAL_RANKER_VERSION = "cineprofile-local-ranker-0.11.0"
 LOCAL_NEIGHBOR_WEIGHT = 0.65
 GLOBAL_MODEL_WEIGHT = 0.35
@@ -78,8 +80,8 @@ SEARCH_DEPTHS = {
         "quality_pages": 1,
         "catalogue_popularity_pages": 1,
         "catalogue_quality_pages": 1,
-        "seed_count": 3,
-        "recommendation_pages": 1,
+        "seed_count": 0,
+        "recommendation_pages": 0,
         "similar_pages": 0,
         "creator_count": 3,
         "actor_count": 2,
@@ -92,8 +94,8 @@ SEARCH_DEPTHS = {
         "quality_pages": 3,
         "catalogue_popularity_pages": 1,
         "catalogue_quality_pages": 2,
-        "seed_count": 6,
-        "recommendation_pages": 1,
+        "seed_count": 0,
+        "recommendation_pages": 0,
         "similar_pages": 0,
         "creator_count": 8,
         "actor_count": 4,
@@ -106,8 +108,8 @@ SEARCH_DEPTHS = {
         "quality_pages": 5,
         "catalogue_popularity_pages": 2,
         "catalogue_quality_pages": 3,
-        "seed_count": 10,
-        "recommendation_pages": 2,
+        "seed_count": 0,
+        "recommendation_pages": 0,
         "similar_pages": 0,
         "creator_count": 16,
         "actor_count": 8,
@@ -1298,7 +1300,9 @@ def recommend_movies(
     )
     if semantic_source_count:
         source_counts[SOURCE_SEMANTIC] = semantic_source_count
+    unseen = quota_candidate_order(unseen)
     analysis_source_counts = selected_source_counts(unseen, limit)
+    analysis_bucket_counts = retrieval_bucket_counts(unseen, limit)
     selected_candidates = unseen[:limit]
     popularity_only_selected = sum(
         candidate.get("_sources") == [SOURCE_POPULARITY]
@@ -1349,6 +1353,7 @@ def recommend_movies(
         "excluded_by_feedback": len(not_seen_on_tmdb) - len(unseen),
         "selected_for_enrichment": min(len(unseen), limit),
         "selected_source_counts": analysis_source_counts,
+        "selected_retrieval_buckets": analysis_bucket_counts,
         "semantic_retrieval_candidates": semantic_source_count,
         "popularity_only_selected": popularity_only_selected,
         "popularity_only_selected_share": round(

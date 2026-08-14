@@ -6,7 +6,13 @@ import cineprofile.candidate_pool as candidate_pool_module
 from cineprofile.candidate_catalog import cached_discover, date_segments
 from cineprofile.candidate_pool import (
     SOURCE_BACK_CATALOG,
+    SOURCE_GENRES,
+    SOURCE_POPULARITY,
+    SOURCE_SEMANTIC,
     build_candidate_pool,
+    quota_candidate_order,
+    retrieval_bucket,
+    retrieval_bucket_counts,
 )
 from cineprofile.db import connect, initialize
 from cineprofile.tmdb import TmdbClient
@@ -19,6 +25,62 @@ def test_recent_period_is_split_by_calendar_year() -> None:
         ("2025-01-01", "2025-12-31"),
         ("2026-01-01", "2026-08-14"),
     ]
+
+
+def test_retrieval_quota_protects_each_candidate_family() -> None:
+    recent = [
+        {"id": index, "_sources": [SOURCE_POPULARITY]}
+        for index in range(1, 71)
+    ]
+    personal = [
+        {"id": index, "_sources": [SOURCE_GENRES]}
+        for index in range(101, 111)
+    ]
+    older = [
+        {"id": index, "_sources": [SOURCE_BACK_CATALOG]}
+        for index in range(201, 221)
+    ]
+
+    ordered = quota_candidate_order(recent + personal + older)
+
+    assert retrieval_bucket_counts(ordered, 10) == {
+        "recent_public": 7,
+        "personal_challenger": 1,
+        "back_catalogue": 2,
+    }
+    assert retrieval_bucket_counts(ordered, 100) == {
+        "recent_public": 70,
+        "personal_challenger": 10,
+        "back_catalogue": 20,
+    }
+    assert {candidate["id"] for candidate in ordered} == {
+        candidate["id"] for candidate in recent + personal + older
+    }
+
+
+def test_retrieval_quota_redistributes_an_empty_bucket() -> None:
+    recent = [
+        {"id": index, "_sources": [SOURCE_POPULARITY]}
+        for index in range(1, 15)
+    ]
+    older = [
+        {"id": index, "_sources": [SOURCE_BACK_CATALOG]}
+        for index in range(101, 105)
+    ]
+
+    ordered = quota_candidate_order(recent + older)
+
+    assert len(ordered) == 18
+    assert len({candidate["id"] for candidate in ordered}) == 18
+
+
+def test_semantic_signal_does_not_change_candidate_family() -> None:
+    candidate = {
+        "id": 42,
+        "_sources": [SOURCE_GENRES, SOURCE_SEMANTIC],
+    }
+
+    assert retrieval_bucket(candidate) == "personal_challenger"
 
 
 def test_discovery_scan_is_persisted_and_reused(tmp_path) -> None:

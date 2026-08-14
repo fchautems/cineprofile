@@ -54,6 +54,12 @@ SOURCE_WEIGHTS = {
     SOURCE_SIMILAR: 1,
 }
 
+RETRIEVAL_BUCKET_WEIGHTS = {
+    "recent_public": 7,
+    "personal_challenger": 1,
+    "back_catalogue": 2,
+}
+
 
 def vote_threshold(release_date: str | None, reliability: str) -> int:
     if reliability == "Souple":
@@ -372,6 +378,58 @@ def balanced_candidate_order(candidates: list[dict]) -> list[dict]:
     return selected + leftovers
 
 
+def retrieval_bucket(candidate: dict) -> str:
+    sources = set(candidate.get("_sources", []))
+    if SOURCE_BACK_CATALOG in sources:
+        return "back_catalogue"
+    if sources & {SOURCE_POPULARITY, SOURCE_QUALITY}:
+        return "recent_public"
+    return "personal_challenger"
+
+
+def quota_candidate_order(candidates: list[dict]) -> list[dict]:
+    """Reserve stable shares for recent, personal and older candidates.
+
+    The input is already ordered by retrieval utility. This pass prevents a
+    newly enlarged source from consuming another category's analysis budget.
+    Empty buckets automatically give their unused places to the others.
+    """
+    buckets = {
+        name: [
+            candidate
+            for candidate in candidates
+            if retrieval_bucket(candidate) == name
+        ]
+        for name in RETRIEVAL_BUCKET_WEIGHTS
+    }
+    positions = {name: 0 for name in buckets}
+    selected: list[dict] = []
+    while len(selected) < len(candidates):
+        added = False
+        for name, weight in RETRIEVAL_BUCKET_WEIGHTS.items():
+            start = positions[name]
+            end = min(len(buckets[name]), start + weight)
+            if end <= start:
+                continue
+            selected.extend(buckets[name][start:end])
+            positions[name] = end
+            added = True
+        if not added:
+            break
+    return selected
+
+
+def retrieval_bucket_counts(
+    candidates: list[dict],
+    limit: int,
+) -> dict[str, int]:
+    counts = {name: 0 for name in RETRIEVAL_BUCKET_WEIGHTS}
+    for candidate in candidates[:limit]:
+        bucket = retrieval_bucket(candidate)
+        counts[bucket] += 1
+    return counts
+
+
 def selected_source_counts(candidates: list[dict], limit: int) -> dict[str, int]:
     counts = {source: 0 for source in SOURCE_PRIORITY}
     for candidate in candidates[:limit]:
@@ -480,9 +538,13 @@ def build_candidate_pool(
     # Personalized sources stay useful as challengers, but their responses are
     # cached and the two low-yield seed endpoints no longer dominate the work.
     seed_errors = 0
-    seeds = favorite_seeds(database, settings["seed_count"])
     recommendation_pages = int(settings.get("recommendation_pages", 1))
     similar_pages = int(settings.get("similar_pages", 0))
+    seeds = (
+        favorite_seeds(database, settings["seed_count"])
+        if recommendation_pages > 0 or similar_pages > 0
+        else []
+    )
     for seed in seeds:
         try:
             if recommendation_pages > 0:

@@ -471,7 +471,7 @@ def test_version_mismatch_is_reported_cleanly() -> None:
         unpack_recommendation_run([{"title": "ancien résultat"}])
 
     current_module = ModuleType("current_recommender")
-    current_module.RECOMMENDATION_PROTOCOL = 14
+    current_module.RECOMMENDATION_PROTOCOL = 15
     ensure_recommendation_protocol(current_module)
     assert unpack_recommendation_run(([{"title": "ok"}], {"returned": 1}))[1][
         "returned"
@@ -635,7 +635,7 @@ def test_recommendation_card_renders_with_explanation(
     import_ratings(SAMPLE, database)
     build_profile(database)
     app = AppTest.from_file(str(ROOT / "app.py"))
-    app.session_state["recommendation_ui_protocol"] = 14
+    app.session_state["recommendation_ui_protocol"] = 15
     app.session_state["recommendations"] = [
         {
             "tmdb_id": 1,
@@ -2369,7 +2369,7 @@ def test_recommendations_use_calibrated_personal_prediction(
     monkeypatch.setenv("CINEPROFILE_DB", str(database))
     monkeypatch.setenv("TMDB_TOKEN", "fake-test-token")
     app = AppTest.from_file(str(ROOT / "app.py"))
-    app.session_state["recommendation_ui_protocol"] = 14
+    app.session_state["recommendation_ui_protocol"] = 15
     app.session_state["recommendations"] = [result]
     app.session_state["recommendation_lists"] = {
         "safe": [],

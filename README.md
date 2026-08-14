@@ -1,6 +1,6 @@
 # CineProfile
 
-Version actuelle : **0.15.0**. L’écran permanent **Ma liste** rassemble les
+Version actuelle : **0.15.1**. L’écran permanent **Ma liste** rassemble les
 films marqués à voir, écartés, vus et envoyés à Radarr. Les décisions se font
 directement sur les cartes, sont réversibles, et restent visibles dans la liste.
 
@@ -16,6 +16,21 @@ réutilisables :
 
 Le CSV n’est donc pas le modèle : c’est l’historique initial. La base enrichie
 devient la mémoire durable de l’outil.
+
+## Correctif 0.15.1 — protéger les places utiles du vivier
+
+Le second audit réel a confirmé que la 0.15 retrouve davantage de bons films
+dans l’ensemble du vivier, mais que son ordre dilue encore trop les candidats
+utiles. L’analyse réserve donc désormais, par blocs de dix, sept places aux
+sorties publiques récentes, une aux pistes personnelles et deux au catalogue
+ancien. Si une famille manque de candidats, ses places sont automatiquement
+redistribuées.
+
+Les recommandations TMDB issues des films favoris sont désactivées : dans le
+rapport fourni, 600 candidats n’avaient retrouvé aucun film cible. L’audit 1.2
+reproduit maintenant l’ordre sémantique réel utilisé par les suggestions,
+mesure le gain propre aux quotas et signale qu’une comparaison avec un ancien
+protocole reste indicative. Le score final des films n’est pas modifié.
 
 ## Mise à jour 0.15.0 — élargir et conserver le vivier
 

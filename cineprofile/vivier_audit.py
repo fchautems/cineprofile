@@ -25,16 +25,20 @@ from .candidate_pool import (
     SOURCE_SEMANTIC,
     balanced_candidate_order,
     build_candidate_pool,
+    personalize_candidate_order,
+    quota_candidate_order,
+    retrieval_bucket_counts,
 )
 from .db import connect, initialize
 from .diagnostics import configure_logging
 from .personal_model import LIKE_THRESHOLD, _load_training_items
 from .profile import build_profile
 from .recommender import SEARCH_DEPTHS
+from .semantic import semantic_evidence
 
 
 VIVIER_AUDIT_SCHEMA_VERSION = 1
-VIVIER_AUDIT_VERSION = "cineprofile-vivier-audit-1.1"
+VIVIER_AUDIT_VERSION = "cineprofile-vivier-audit-1.2"
 DEFAULT_BUDGETS = (100, 300, 500)
 DEFAULT_PERIOD_YEARS = 3
 ProgressCallback = Callable[[int, int, str], None]
@@ -157,7 +161,7 @@ def _without_source(candidates: list[dict], removed_source: str) -> list[dict]:
         if SOURCE_SEMANTIC in candidate.get("_sources", []):
             sources.append(SOURCE_SEMANTIC)
         remaining.append({**candidate, "_sources": sources})
-    return balanced_candidate_order(remaining)
+    return quota_candidate_order(balanced_candidate_order(remaining))
 
 
 def evaluate_vivier_pool(
@@ -242,16 +246,23 @@ def _exclude_training_history(
     ]
     diagnostics["excluded_training_history"] = len(candidates) - len(unseen)
     diagnostics["after_training_history_exclusion"] = len(unseen)
+    _update_trace_ranks(unseen, diagnostics)
+    return unseen
+
+
+def _update_trace_ranks(
+    candidates: list[dict],
+    diagnostics: dict[str, object],
+) -> None:
     trace = diagnostics.get("candidate_trace")
     if isinstance(trace, dict):
         ranks = {
             int(candidate["id"]): position
-            for position, candidate in enumerate(unseen, start=1)
+            for position, candidate in enumerate(candidates, start=1)
         }
         for candidate_id, item in trace.items():
             if isinstance(item, dict) and item.get("state") == "eligible":
                 item["rank"] = ranks.get(int(candidate_id))
-    return unseen
 
 
 def _missing_traces(
@@ -330,6 +341,12 @@ def _aggregate_windows(
             if eligible_target_count
             else None
         )
+        pre_quota_hits = sum(
+            int(window["pre_quota_metrics"][f"hits_at_{budget}"])
+            for window in windows
+        )
+        summary[f"pre_quota_hits_at_{budget}"] = pre_quota_hits
+        summary[f"quota_gain_at_{budget}"] = hits - pre_quota_hits
 
     coverage: defaultdict[str, int] = defaultdict(int)
     source_counts: defaultdict[str, int] = defaultdict(int)
@@ -458,6 +475,31 @@ def run_vivier_audit(
                 snapshot,
                 diagnostics,
             )
+            retrieval_evidence = semantic_evidence(
+                snapshot,
+                candidates,
+                float(profile["summary"]["average_rating"]),
+                enabled=True,
+            )
+            candidates, semantic_count = personalize_candidate_order(
+                candidates,
+                retrieval_evidence,
+                maximum_semantic_source=max(
+                    40,
+                    int(SEARCH_DEPTHS[depth]["analysis_limit"]) // 2,
+                ),
+            )
+            pre_quota_metrics = _retrieval_metrics(
+                candidates,
+                targets,
+                budgets=budgets,
+            )
+            candidates = quota_candidate_order(candidates)
+            _update_trace_ranks(candidates, diagnostics)
+            diagnostics["semantic_retrieval_candidates"] = semantic_count
+            diagnostics["retrieval_bucket_counts_at_300"] = (
+                retrieval_bucket_counts(candidates, 300)
+            )
             metrics = evaluate_vivier_pool(
                 candidates,
                 targets,
@@ -484,6 +526,7 @@ def run_vivier_audit(
                     "source_counts": source_counts,
                     "pool_diagnostics": diagnostics,
                     "metrics": metrics,
+                    "pre_quota_metrics": pre_quota_metrics,
                     "eligible_period_metrics": _retrieval_metrics(
                         candidates,
                         eligible_targets,
@@ -525,6 +568,8 @@ def run_vivier_audit(
             "reliability": reliability,
             "release_period_years": period_years,
             "ranking_excluded": True,
+            "semantic_retrieval_included": True,
+            "retrieval_quota_order_included": True,
             "genre_exclusions_disabled": True,
             "back_catalogue_enabled": True,
             "source_ablation": (
@@ -565,6 +610,11 @@ def run_vivier_audit(
         previous_summary = previous_report.get("summary") or {}
         payload["comparison_with_previous"] = {
             "previous_app_version": previous_report.get("app_version"),
+            "previous_audit_version": previous_report.get("audit_version"),
+            "same_audit_version": (
+                previous_report.get("audit_version")
+                == VIVIER_AUDIT_VERSION
+            ),
             "previous_created_at": previous_report.get("created_at"),
             "recall_point_deltas": {
                 str(budget): round(
