@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cineprofile"
-version = "0.13.1"
+version = "0.13.2"
 description = "Profil cinématographique enrichi et moteur de recommandations à partir d'un export IMDb."
 requires-python = ">=3.11"
 dependencies = [
@@ -16,7 +16,7 @@ dependencies = [
   "python-dotenv>=1.0,<2",
   "scikit-learn>=1.5,<2",
   "scipy>=1.10,<2",
-  "streamlit>=1.38,<2",
+  "streamlit>=1.61,<2",
 ]
 
 [project.optional-dependencies]

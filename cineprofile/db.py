@@ -8,7 +8,7 @@ from typing import Iterator
 
 
 DEFAULT_DB_PATH = Path(os.getenv("CINEPROFILE_DB", "data/cineprofile.db"))
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 class CineProfileConnection(sqlite3.Connection):
@@ -184,6 +184,10 @@ CREATE TABLE IF NOT EXISTS radarr_requests (
     radarr_movie_id INTEGER,
     status TEXT NOT NULL CHECK(status IN ('downloaded')),
     payload_json TEXT,
+    radarr_state TEXT NOT NULL DEFAULT 'sent',
+    status_detail TEXT,
+    progress REAL,
+    status_checked_at TEXT,
     requested_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -264,6 +268,17 @@ def initialize(path: str | Path | None = None) -> Path:
             connection.execute(
                 "ALTER TABLE radarr_requests ADD COLUMN payload_json TEXT"
             )
+        for column_name, definition in (
+            ("radarr_state", "TEXT NOT NULL DEFAULT 'sent'"),
+            ("status_detail", "TEXT"),
+            ("progress", "REAL"),
+            ("status_checked_at", "TEXT"),
+        ):
+            if column_name not in radarr_columns:
+                connection.execute(
+                    f"ALTER TABLE radarr_requests ADD COLUMN "
+                    f"{column_name} {definition}"
+                )
         connection.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
     return target
 

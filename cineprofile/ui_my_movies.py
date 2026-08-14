@@ -8,6 +8,10 @@ from cineprofile.preferences import (
     load_feedback,
     load_radarr_requests,
 )
+from cineprofile.radarr_sync import (
+    radarr_states_stale,
+    synchronize_radarr_states,
+)
 from cineprofile.ui_recommendation_cards import render_recommendation_cards
 
 
@@ -73,6 +77,10 @@ def load_my_movies(database: str | Path) -> list[dict]:
                 "feedback_label": FEEDBACK_LABELS.get(feedback_action, "—"),
                 "downloaded": bool(download_row),
                 "downloaded_at": download_row.get("requested_at"),
+                "radarr_state": download_row.get("radarr_state"),
+                "radarr_status_detail": download_row.get("status_detail"),
+                "radarr_progress": download_row.get("progress"),
+                "radarr_checked_at": download_row.get("status_checked_at"),
                 "updated_at": max(updated_values) if updated_values else "",
             }
         )
@@ -113,11 +121,40 @@ def filter_my_movies(
     return filtered
 
 
+def _select_filter(filter_name: str) -> None:
+    st.session_state["my_movies_filter"] = filter_name
+    st.session_state["skip_radarr_sync_once"] = True
+
+
+def _skip_radarr_sync_once() -> None:
+    st.session_state["skip_radarr_sync_once"] = True
+
+
+def _request_radarr_sync() -> None:
+    st.session_state["force_radarr_sync"] = True
+
+
+@st.fragment(run_every="30s")
 def render_my_movies_tab(
     database: str | Path,
     *,
     radarr_config: dict | None = None,
 ) -> None:
+    radarr_requests = load_radarr_requests(database)
+    force_sync = bool(st.session_state.pop("force_radarr_sync", False))
+    skip_sync = bool(st.session_state.pop("skip_radarr_sync_once", False))
+    if (
+        radarr_config
+        and radarr_requests
+        and (force_sync or (not skip_sync and radarr_states_stale(radarr_requests)))
+    ):
+        try:
+            synchronize_radarr_states(database, radarr_config)
+        except Exception as exc:
+            st.session_state["radarr_sync_error"] = str(exc)
+        else:
+            st.session_state.pop("radarr_sync_error", None)
+
     st.subheader("Ma liste")
     st.write(
         "Retrouve tous les films sur lesquels tu as agi dans CineProfile, "
@@ -130,6 +167,31 @@ def render_my_movies_tab(
             "Déjà vu ou Envoyer à Radarr depuis les suggestions."
         )
         return
+
+    if radarr_requests:
+        status_column, refresh_column = st.columns([8, 1])
+        if st.session_state.get("radarr_sync_error"):
+            status_column.warning(
+                "Radarr est momentanément injoignable. Les derniers états "
+                "connus restent affichés."
+            )
+        else:
+            checked = [
+                str(row.get("status_checked_at") or "")
+                for row in load_radarr_requests(database).values()
+                if row.get("status_checked_at")
+            ]
+            if checked:
+                status_column.caption(
+                    "États Radarr actualisés à " + max(checked)[11:19]
+                )
+        refresh_column.button(
+            ":material/sync:",
+            key="refresh_radarr_states",
+            help="Actualiser maintenant les états Radarr",
+            width="stretch",
+            on_click=_request_radarr_sync,
+        )
 
     counts = {
         "Tous": len(movies),
@@ -145,20 +207,21 @@ def render_my_movies_tab(
     status_filter = st.session_state.get("my_movies_filter", "Tous")
     filter_columns = st.columns(len(FILTERS))
     for column, filter_name in zip(filter_columns, FILTERS, strict=True):
-        if column.button(
+        column.button(
             f"{FILTER_ICONS[filter_name]} {counts[filter_name]}",
             key=f"my_movies_filter_{filter_name}",
             type="primary" if status_filter == filter_name else "secondary",
             width="stretch",
             help=FILTER_HELP[filter_name],
-        ):
-            st.session_state["my_movies_filter"] = filter_name
-            st.rerun()
+            on_click=_select_filter,
+            args=(filter_name,),
+        )
 
     search = st.text_input(
         "Chercher un film",
         placeholder="Titre…",
         key="my_movies_search",
+        on_change=_skip_radarr_sync_once,
     )
     visible = filter_my_movies(movies, status_filter, search)
     st.caption(f"{len(visible)} film(s)")

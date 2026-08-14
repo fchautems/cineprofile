@@ -38,6 +38,7 @@ from cineprofile.preferences import (
     clear_preferences,
     load_feedback,
     load_preferences,
+    save_feedback,
     save_preferences,
 )
 from cineprofile.personal_model import (
@@ -290,9 +291,9 @@ def test_streamlit_exposes_all_tabs_and_excludable_genres(
 
     assert not app.exception
     assert not any(field.label == "Clé TMDB" for field in app.text_input)
-    assert any(
+    assert not any(
         button.label == "Modifier les connexions" for button in app.button
-    )
+    ), "Les réglages inactifs ne doivent plus être rendus"
     assert [tab.label for tab in app.tabs] == [
         "Suggestions",
         "Ma liste",
@@ -308,6 +309,58 @@ def test_streamlit_exposes_all_tabs_and_excludable_genres(
     assert {"Horreur", "Science-Fiction", "Drame", "Documentaire"} <= set(
         excluded.options
     )
+
+
+def test_streamlit_renders_only_my_list_when_selected(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    database = tmp_path / "lazy-list.db"
+    monkeypatch.setenv("CINEPROFILE_DB", str(database))
+    monkeypatch.setenv("TMDB_TOKEN", "fake-test-token")
+    import_ratings(SAMPLE, database)
+    build_profile(database)
+    save_feedback(
+        {
+            "tmdb_id": 991,
+            "imdb_id": "tt0000991",
+            "title": "Film de ma liste",
+            "release_date": "2026-01-01",
+            "overview": "Résumé de contrôle.",
+            "genres": ["Drame"],
+        },
+        "watchlist",
+        database,
+    )
+
+    app = AppTest.from_file(str(ROOT / "app.py"))
+    app.session_state["main_navigation"] = "Ma liste"
+    app.run(timeout=15)
+
+    assert not app.exception
+    assert any(
+        button.label == ":material/thumb_up: 1" for button in app.button
+    )
+    assert not any(
+        widget.label == "Genres exclus de la recherche"
+        for widget in app.multiselect
+    )
+
+    next(
+        button
+        for button in app.button
+        if button.label == ":material/thumb_down:"
+    ).click()
+    app.run(timeout=15)
+    assert load_feedback(database)[991]["action"] == "not_interested"
+
+    next(
+        button
+        for button in app.button
+        if button.label == ":material/thumb_up:"
+    ).click()
+    app.run(timeout=15)
+    assert load_feedback(database)[991]["action"] == "watchlist"
 
 
 def test_tmdb_discovery_applies_real_date_filters() -> None:
@@ -2328,6 +2381,7 @@ def test_recommendations_use_calibrated_personal_prediction(
             }
         ],
     }
+    app.session_state["recommendation_view"] = "✨ Découvertes pour toi"
     app.run(timeout=20)
 
     assert not app.exception

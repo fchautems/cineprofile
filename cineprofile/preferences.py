@@ -159,7 +159,8 @@ def load_radarr_requests(
         rows = connection.execute(
             """
             SELECT tmdb_id, imdb_id, title, radarr_movie_id, status,
-                   payload_json, requested_at, updated_at
+                   payload_json, radarr_state, status_detail, progress,
+                   status_checked_at, requested_at, updated_at
             FROM radarr_requests
             """
         ).fetchall()
@@ -212,7 +213,7 @@ def record_radarr_download(
     *,
     already_present: bool = False,
 ) -> None:
-    """Atomically store a successful Radarr attempt and Downloaded flag."""
+    """Atomically store a successful Radarr request awaiting synchronization."""
     initialize(database)
     now = datetime.now(UTC).isoformat()
     with transaction(database) as connection:
@@ -236,8 +237,9 @@ def record_radarr_download(
             """
             INSERT INTO radarr_requests(
               tmdb_id, imdb_id, title, radarr_movie_id, status, payload_json,
+              radarr_state, status_detail, progress, status_checked_at,
               requested_at, updated_at
-            ) VALUES (?, ?, ?, ?, 'downloaded', ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, 'downloaded', ?, 'sent', NULL, NULL, NULL, ?, ?)
             ON CONFLICT(tmdb_id) DO UPDATE SET
               imdb_id=excluded.imdb_id,
               title=excluded.title,
@@ -246,6 +248,10 @@ def record_radarr_download(
               ),
               status='downloaded',
               payload_json=excluded.payload_json,
+              radarr_state='sent',
+              status_detail=NULL,
+              progress=NULL,
+              status_checked_at=NULL,
               requested_at=excluded.requested_at,
               updated_at=excluded.updated_at
             """,
@@ -259,6 +265,36 @@ def record_radarr_download(
                 now,
             ),
         )
+
+
+def update_radarr_states(
+    states: dict[int, dict],
+    database: str | Path | None = None,
+) -> None:
+    """Persist the last trustworthy state received from Radarr."""
+    if not states:
+        return
+    initialize(database)
+    now = datetime.now(UTC).isoformat()
+    with transaction(database) as connection:
+        for tmdb_id, state in states.items():
+            connection.execute(
+                """
+                UPDATE radarr_requests
+                SET radarr_movie_id=COALESCE(?, radarr_movie_id),
+                    radarr_state=?, status_detail=?, progress=?,
+                    status_checked_at=?
+                WHERE tmdb_id=?
+                """,
+                (
+                    state.get("radarr_movie_id"),
+                    str(state["state"]),
+                    state.get("detail"),
+                    state.get("progress"),
+                    now,
+                    int(tmdb_id),
+                ),
+            )
 
 
 def load_radarr_attempts(

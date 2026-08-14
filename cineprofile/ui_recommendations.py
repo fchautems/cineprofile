@@ -792,29 +792,33 @@ def render_recommendations_tab(
 
         if recommendation_lists:
             safe_tab, discovery_tab = st.tabs(
-                ["✅ Valeurs sûres", "✨ Découvertes pour toi"]
+                ["✅ Valeurs sûres", "✨ Découvertes pour toi"],
+                key="recommendation_view",
+                on_change="rerun",
             )
             with safe_tab:
-                _render_recommendation_list(
-                    database,
-                    view="safe",
-                    recommendations=recommendation_lists.get("safe", []),
-                    all_recommendations=recommendations,
-                    diagnostics=diagnostics,
-                    diagnostic_download_payload=diagnostic_download_payload,
-                    diagnostic_download_name=diagnostic_download_name,
-                    radarr_config=radarr_config,
-                )
+                if safe_tab.open:
+                    _render_recommendation_list(
+                        database,
+                        view="safe",
+                        recommendations=recommendation_lists.get("safe", []),
+                        all_recommendations=recommendations,
+                        diagnostics=diagnostics,
+                        diagnostic_download_payload=diagnostic_download_payload,
+                        diagnostic_download_name=diagnostic_download_name,
+                        radarr_config=radarr_config,
+                    )
             with discovery_tab:
-                _render_recommendation_list(
-                    database,
-                    view="discovery",
-                    recommendations=recommendation_lists.get(
-                        "discovery", []
-                    ),
-                    all_recommendations=recommendations,
-                    diagnostics=diagnostics,
-                    diagnostic_download_payload=diagnostic_download_payload,
-                    diagnostic_download_name=diagnostic_download_name,
-                    radarr_config=radarr_config,
-                )
+                if discovery_tab.open:
+                    _render_recommendation_list(
+                        database,
+                        view="discovery",
+                        recommendations=recommendation_lists.get(
+                            "discovery", []
+                        ),
+                        all_recommendations=recommendations,
+                        diagnostics=diagnostics,
+                        diagnostic_download_payload=diagnostic_download_payload,
+                        diagnostic_download_name=diagnostic_download_name,
+                        radarr_config=radarr_config,
+                    )

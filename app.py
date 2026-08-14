@@ -118,37 +118,44 @@ if counts["total"] and profile_needs_refresh(profile, counts):
         "Ma liste",
         "Mon profil",
         "Réglages",
-    ]
+    ],
+    default="Réglages" if not token else "Suggestions",
+    key="main_navigation",
+    on_change="rerun",
 )
 
 with tab_recommend:
-    render_recommendations_tab(
-        DB_PATH,
-        profile,
-        token=token,
-        language=LANGUAGE,
-        region=REGION,
-        logger=APP_LOGGER,
-        radarr_config=radarr_config,
-    )
+    if tab_recommend.open:
+        render_recommendations_tab(
+            DB_PATH,
+            profile,
+            token=token,
+            language=LANGUAGE,
+            region=REGION,
+            logger=APP_LOGGER,
+            radarr_config=radarr_config,
+        )
 with tab_my_movies:
-    render_my_movies_tab(DB_PATH, radarr_config=radarr_config)
+    if tab_my_movies.open:
+        render_my_movies_tab(DB_PATH, radarr_config=radarr_config)
 with tab_profile:
-    profile = render_profile_tab(
-        DB_PATH,
-        counts,
-        profile,
-        logger=APP_LOGGER,
-    )
+    if tab_profile.open:
+        profile = render_profile_tab(
+            DB_PATH,
+            counts,
+            profile,
+            logger=APP_LOGGER,
+        )
 with tab_preferences:
-    counts, profile = render_settings_tab(
-        DB_PATH,
-        ENV_PATH,
-        token=token,
-        language=LANGUAGE,
-        region=REGION,
-        counts=counts,
-        profile=profile,
-        clear_catalog_cache=clear_catalog_cache,
-        logger=APP_LOGGER,
-    )
+    if tab_preferences.open:
+        counts, profile = render_settings_tab(
+            DB_PATH,
+            ENV_PATH,
+            token=token,
+            language=LANGUAGE,
+            region=REGION,
+            counts=counts,
+            profile=profile,
+            clear_catalog_cache=clear_catalog_cache,
+            logger=APP_LOGGER,
+        )

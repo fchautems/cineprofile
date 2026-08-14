@@ -1,6 +1,6 @@
 # CineProfile
 
-Version actuelle : **0.13.1**. L’écran permanent **Ma liste** rassemble les
+Version actuelle : **0.13.2**. L’écran permanent **Ma liste** rassemble les
 films marqués à voir, écartés, vus et envoyés à Radarr. Les décisions se font
 directement sur les cartes, sont réversibles, et restent visibles dans la liste.
 
@@ -16,6 +16,24 @@ réutilisables :
 
 Le CSV n’est donc pas le modèle : c’est l’historique initial. La base enrichie
 devient la mémoire durable de l’outil.
+
+## Mise à jour 0.13.2 — états Radarr réels et interface fluide
+
+**Ma liste** synchronise désormais Radarr toutes les trente secondes, sans
+ralentir les actions personnelles. Les cartes distinguent l’envoi initial, la
+surveillance, l’absence de téléchargement actif, le téléchargement avec son
+avancement, le fichier disponible, l’erreur, le film absent et le film non
+monitoré. Le dernier état fiable reste affiché lorsque Radarr est injoignable.
+
+Les clics 👍, 👎 et 👁 utilisent maintenant un callback avant l’unique rerun de
+Streamlit. Les onglets principaux et les deux listes de suggestions sont
+exécutés paresseusement : seuls les contenus visibles sont reconstruits. Dans
+Ma liste, les actions et le rafraîchissement automatique restent confinés à un
+fragment indépendant.
+
+Une recherche Radarr peut être relancée depuis la carte lorsqu’aucun
+téléchargement n’est actif ou qu’une erreur est détectée. Un film présent mais
+non monitoré est réactivé avant la nouvelle recherche.
 
 ## Mise à jour 0.13.1 — actions directes dans Ma liste
 

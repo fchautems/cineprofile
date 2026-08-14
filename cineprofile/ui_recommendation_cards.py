@@ -35,6 +35,17 @@ FEEDBACK_ACTIONS = {
     },
 }
 
+RADARR_STATES = {
+    "sent": (":material/send:", "Envoyé à Radarr"),
+    "monitored": (":material/radar:", "Monitoré"),
+    "no_result": (":material/search_off:", "Aucun téléchargement"),
+    "downloading": (":material/downloading:", "Téléchargement"),
+    "available": (":material/task_alt:", "Disponible"),
+    "error": (":material/error:", "Erreur Radarr"),
+    "missing": (":material/link_off:", "Absent de Radarr"),
+    "unmonitored": (":material/notifications_off:", "Non monitoré"),
+}
+
 
 def _remove_from_recommendation_state(tmdb_id: int) -> None:
     st.session_state["recommendations"] = [
@@ -54,20 +65,73 @@ def _remove_from_recommendation_state(tmdb_id: int) -> None:
         }
 
 
-def _set_feedback(
+def _toggle_feedback(
     item: dict,
     action: str,
-    existing_action: str | None,
     database: str | Path,
+    skip_radarr_sync: bool = False,
 ) -> None:
-    """Toggle one of the three mutually exclusive personal states."""
+    """Update the state before Streamlit's single automatic rerun."""
+    existing = load_feedback(database).get(int(item["tmdb_id"]))
+    existing_action = str(existing["action"]) if existing else None
     if existing_action == action:
         remove_feedback(int(item["tmdb_id"]), database)
     else:
         save_feedback(item, action, database)
     if action in {"not_interested", "already_seen"}:
         _remove_from_recommendation_state(int(item["tmdb_id"]))
-    st.rerun()
+    if skip_radarr_sync:
+        st.session_state["skip_radarr_sync_once"] = True
+
+
+def _send_to_radarr(
+    item: dict,
+    radarr_config: dict,
+    database: str | Path,
+) -> None:
+    tmdb_id = int(item["tmdb_id"])
+    try:
+        with RadarrClient(
+            radarr_config["url"],
+            radarr_config["api_key"],
+        ) as radarr_client:
+            result = radarr_client.add_movie(
+                tmdb_id,
+                root_folder_path=radarr_config["root_folder_path"],
+                quality_profile_id=int(radarr_config["quality_profile_id"]),
+            )
+    except Exception as exc:
+        record_radarr_attempt(
+            item,
+            "failed",
+            database,
+            error_message=str(exc),
+        )
+        st.session_state[f"radarr_error_{tmdb_id}"] = str(exc)
+    else:
+        record_radarr_download(
+            item,
+            result.movie_id,
+            database,
+            already_present=result.already_present,
+        )
+        st.session_state[f"radarr_notice_{tmdb_id}"] = (
+            "Recherche relancée dans Radarr."
+            if result.already_present
+            else "Film envoyé à Radarr."
+        )
+        st.session_state["force_radarr_sync"] = True
+
+
+def _render_radarr_state(host, request: dict) -> None:
+    state = str(request.get("radarr_state") or "sent")
+    icon, label = RADARR_STATES.get(state, RADARR_STATES["sent"])
+    progress = request.get("progress")
+    if state == "downloading" and progress is not None:
+        label += f" · {float(progress):.0f}%"
+    host.markdown(f"{icon} **{label}**")
+    if request.get("status_detail"):
+        host.caption(str(request["status_detail"]))
 
 
 def render_recommendation_cards(
@@ -270,7 +334,18 @@ def render_recommendation_cards(
 
             radarr_request = radarr_requests.get(int(item["tmdb_id"]))
             if radarr_request:
-                score_col.caption(":material/radar: Envoyé à Radarr")
+                _render_radarr_state(score_col, radarr_request)
+
+            radarr_error = st.session_state.pop(
+                f"radarr_error_{int(item['tmdb_id'])}", None
+            )
+            radarr_notice = st.session_state.pop(
+                f"radarr_notice_{int(item['tmdb_id'])}", None
+            )
+            if radarr_error:
+                st.error(f"Envoi à Radarr échoué : {radarr_error}")
+            if radarr_notice:
+                st.success(str(radarr_notice))
 
             action_columns = st.columns(4)
             existing_action = (
@@ -284,58 +359,60 @@ def render_recommendation_cards(
                 strict=True,
             ):
                 action_meta = FEEDBACK_ACTIONS[action]
-                if column.button(
+                column.button(
                     action_meta["icon"],
                     key=f"{action}_{view}_{item['tmdb_id']}",
                     type="primary" if existing_action == action else "secondary",
                     width="stretch",
                     help=action_meta["help"],
-                ):
-                    _set_feedback(item, action, existing_action, database)
-            if action_columns[3].button(
-                ":material/radar:" if radarr_request else ":material/send:",
+                    on_click=_toggle_feedback,
+                    args=(item, action, database, is_my_list),
+                )
+            radarr_state = (
+                str(radarr_request.get("radarr_state") or "sent")
+                if radarr_request
+                else ""
+            )
+            retryable = radarr_state in {
+                "no_result",
+                "error",
+                "missing",
+                "unmonitored",
+            }
+            radarr_icon = (
+                ":material/replay:"
+                if retryable
+                else (
+                    RADARR_STATES.get(radarr_state, RADARR_STATES["sent"])[0]
+                    if radarr_request
+                    else ":material/send:"
+                )
+            )
+            action_columns[3].button(
+                radarr_icon,
                 key=f"radarr_{view}_{item['tmdb_id']}",
                 type="primary" if radarr_request else "secondary",
                 width="stretch",
-                disabled=radarr_config is None or radarr_request is not None,
+                disabled=(
+                    radarr_config is None
+                    or (radarr_request is not None and not retryable)
+                ),
                 help=(
-                    "Déjà envoyé à Radarr. L’état réel sera synchronisé ensuite."
-                    if radarr_request
+                    "Relancer la recherche dans Radarr."
+                    if retryable
                     else (
-                        "Connecte d’abord Radarr dans Réglages."
-                        if radarr_config is None
-                        else "Envoyer à Radarr et lancer sa recherche."
+                        "État synchronisé depuis Radarr."
+                        if radarr_request
+                        else (
+                            "Connecte d’abord Radarr dans Réglages."
+                            if radarr_config is None
+                            else "Envoyer à Radarr et lancer sa recherche."
+                        )
                     )
                 ),
-            ):
-                try:
-                    with RadarrClient(
-                        radarr_config["url"],
-                        radarr_config["api_key"],
-                    ) as radarr_client:
-                        result = radarr_client.add_movie(
-                            int(item["tmdb_id"]),
-                            root_folder_path=radarr_config["root_folder_path"],
-                            quality_profile_id=int(
-                                radarr_config["quality_profile_id"]
-                            ),
-                        )
-                except Exception as exc:
-                    record_radarr_attempt(
-                        item,
-                        "failed",
-                        database,
-                        error_message=str(exc),
-                    )
-                    st.error(f"Envoi à Radarr échoué : {exc}")
-                else:
-                    record_radarr_download(
-                        item,
-                        result.movie_id,
-                        database,
-                        already_present=result.already_present,
-                    )
-                    st.rerun()
+                on_click=_send_to_radarr if radarr_config is not None else None,
+                args=(item, radarr_config, database) if radarr_config else None,
+            )
 
             if is_my_list:
                 continue
