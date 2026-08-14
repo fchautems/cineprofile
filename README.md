@@ -1,6 +1,6 @@
 # CineProfile
 
-Version actuelle : **0.13.3**. L’écran permanent **Ma liste** rassemble les
+Version actuelle : **0.14.0**. L’écran permanent **Ma liste** rassemble les
 films marqués à voir, écartés, vus et envoyés à Radarr. Les décisions se font
 directement sur les cartes, sont réversibles, et restent visibles dans la liste.
 
@@ -16,6 +16,28 @@ réutilisables :
 
 Le CSV n’est donc pas le modèle : c’est l’historique initial. La base enrichie
 devient la mémoire durable de l’outil.
+
+## Mise à jour 0.14.0 — mesurer le vivier avant de le modifier
+
+La maintenance propose désormais **Mesurer le vivier — films 8+ retrouvés**.
+Cet audit reconstruit trois ou cinq profils chronologiques : pour chaque
+période, seules les notes antérieures sont visibles, puis CineProfile vérifie
+si les films ultérieurement notés 8+ figuraient dans les 100, 300 et 500
+premiers candidats.
+
+Le rapport mesure séparément :
+
+- le rappel complet et le rappel limité à la période de sortie par défaut ;
+- le nombre de bons films touchés par chaque source ;
+- la perte de rappel lorsque chaque source est retirée à son tour ;
+- les raisons des absences : aucune source, période, votes, genre ou rang
+  supérieur au budget d’analyse.
+
+L’audit travaille sur des copies temporaires de la base, n’entraîne pas le
+classement final et n’active aucune nouvelle règle. Les notes sont coupées
+chronologiquement, mais les votes, métadonnées et pages de popularité TMDB sont
+nécessairement ceux disponibles au moment de l’audit. Le rapport JSON est
+enregistré dans `data/logs` et peut être téléchargé depuis l’interface.
 
 ## Mise à jour 0.13.3 — état Radarr frais dès l’ouverture
 

@@ -169,7 +169,12 @@ def _load_memberships(
     return []
 
 
-def build_profile(database: str | Path | None = None) -> dict:
+def build_profile(
+    database: str | Path | None = None,
+    *,
+    train_personal_model: bool = True,
+    persist: bool = True,
+) -> dict:
     initialize(database)
     with connect(database) as connection:
         titles = pd.read_sql_query("SELECT * FROM titles", connection)
@@ -404,30 +409,38 @@ def build_profile(database: str | Path | None = None) -> dict:
         },
     }
 
-    personal_model = ensure_personal_model(database)
-    profile["personal_model"] = personal_model.summary
+    if train_personal_model:
+        personal_model = ensure_personal_model(database)
+        profile["personal_model"] = personal_model.summary
+    else:
+        profile["personal_model"] = {
+            "status": "not_requested",
+            "reason": "profil de récupération uniquement",
+        }
     profile["methodology"]["personal_prediction"] = (
         "les notes existantes sont masquées par groupes, prédites sans avoir "
         "été vues pendant l’apprentissage, puis utilisées pour calibrer la "
         "probabilité d’attribuer au moins 8/10"
     )
 
-    with transaction(database) as connection:
-        cursor = connection.execute(
-            """
-            INSERT INTO profile_runs(
-              created_at, model_version, rated_count, enriched_count, profile_json
-            ) VALUES (?, ?, ?, ?, ?)
-            """,
-            (
-                profile["generated_at"],
-                MODEL_VERSION,
-                profile["summary"]["rated_titles"],
-                profile["summary"]["enriched_titles"],
-                json.dumps(profile, ensure_ascii=False),
-            ),
-        )
-        profile["profile_run_id"] = cursor.lastrowid
+    if persist:
+        with transaction(database) as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO profile_runs(
+                  created_at, model_version, rated_count, enriched_count,
+                  profile_json
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    profile["generated_at"],
+                    MODEL_VERSION,
+                    profile["summary"]["rated_titles"],
+                    profile["summary"]["enriched_titles"],
+                    json.dumps(profile, ensure_ascii=False),
+                ),
+            )
+            profile["profile_run_id"] = cursor.lastrowid
     return profile
 
 

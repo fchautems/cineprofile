@@ -1051,7 +1051,7 @@ def _candidate_pool(
     depth: str,
     reliability: str,
     excluded_genre_ids: set[int] | None = None,
-) -> tuple[list[dict], dict[str, int], dict[str, int]]:
+) -> tuple[list[dict], dict[str, int], dict[str, object]]:
     return build_candidate_pool(
         client,
         profile,

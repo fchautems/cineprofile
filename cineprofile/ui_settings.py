@@ -11,6 +11,7 @@ from cineprofile.ui_connections import render_connections
 from cineprofile.ui_import import render_import_tab
 from cineprofile.ui_preferences import render_preferences_tab
 from cineprofile.ui_profile import render_profile_tab
+from cineprofile.ui_vivier_audit import render_vivier_audit_panel
 
 
 def render_settings_tab(
@@ -78,6 +79,15 @@ def render_settings_tab(
             profile,
             logger=logger,
             advanced=True,
+        )
+        st.divider()
+        render_vivier_audit_panel(
+            database,
+            token=token,
+            language=language,
+            region=region,
+            rated_count=int(counts["total"]),
+            logger=logger,
         )
         st.divider()
         render_catalog_tab(database)

@@ -368,7 +368,8 @@ def build_candidate_pool(
     reliability: str,
     excluded_genre_ids: set[int] | None,
     excluded_genre: Callable[[dict, set[int] | None], bool],
-) -> tuple[list[dict], dict[str, int], dict[str, int]]:
+    trace_ids: set[int] | None = None,
+) -> tuple[list[dict], dict[str, int], dict[str, object]]:
     pool: dict[int, dict] = {}
     source_counts: dict[str, int] = {}
 
@@ -500,10 +501,46 @@ def build_candidate_pool(
         if not excluded_genre(candidate, excluded_genre_ids)
     ]
     ordered = balanced_candidate_order(filtered)
-    return ordered, source_counts, {
+    diagnostics: dict[str, object] = {
         "raw_unique_candidates": len(all_candidates),
         "excluded_outside_window": len(all_candidates) - len(in_window),
         "excluded_insufficient_votes": len(in_window) - len(reliable),
         "excluded_genres": len(reliable) - len(filtered),
         "after_pre_enrichment_filters": len(filtered),
     }
+    if trace_ids:
+        in_window_ids = {int(candidate["id"]) for candidate in in_window}
+        reliable_ids = {int(candidate["id"]) for candidate in reliable}
+        filtered_ids = {int(candidate["id"]) for candidate in filtered}
+        ranks = {
+            int(candidate["id"]): position
+            for position, candidate in enumerate(ordered, start=1)
+        }
+        trace: dict[str, dict] = {}
+        for candidate_id in sorted({int(value) for value in trace_ids}):
+            candidate = pool.get(candidate_id)
+            if candidate is None:
+                state = "absent_from_all_sources"
+            elif candidate_id not in in_window_ids:
+                state = "outside_release_window"
+            elif candidate_id not in reliable_ids:
+                state = "insufficient_votes"
+            elif candidate_id not in filtered_ids:
+                state = "excluded_genre"
+            else:
+                state = "eligible"
+            trace[str(candidate_id)] = {
+                "state": state,
+                "rank": ranks.get(candidate_id),
+                "sources": (
+                    list(candidate.get("_sources", [])) if candidate else []
+                ),
+                "release_date": (
+                    candidate.get("release_date") if candidate else None
+                ),
+                "vote_count": (
+                    int(candidate.get("vote_count") or 0) if candidate else None
+                ),
+            }
+        diagnostics["candidate_trace"] = trace
+    return ordered, source_counts, diagnostics
