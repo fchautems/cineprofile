@@ -1,9 +1,8 @@
 # CineProfile
 
-Version actuelle : **0.13.0**. L’écran permanent **Ma liste** rassemble les
-statuts « À voir », « Pas intéressé », « Déjà vu » et les envois à Radarr. Ils sont
-filtrables, modifiables et réversibles. CineProfile peut aussi envoyer un film
-à Radarr et conserver localement l’historique horodaté de chaque tentative.
+Version actuelle : **0.13.1**. L’écran permanent **Ma liste** rassemble les
+films marqués à voir, écartés, vus et envoyés à Radarr. Les décisions se font
+directement sur les cartes, sont réversibles, et restent visibles dans la liste.
 
 CineProfile transforme un export `ratings.csv` d’IMDb en trois éléments
 réutilisables :
@@ -17,6 +16,19 @@ réutilisables :
 
 Le CSV n’est donc pas le modèle : c’est l’historique initial. La base enrichie
 devient la mémoire durable de l’outil.
+
+## Mise à jour 0.13.1 — actions directes dans Ma liste
+
+**Ma liste** abandonne le tableau et le formulaire « sélectionner puis
+modifier ». Elle réutilise les cartes de **Suggestions**, avec les mêmes quatre
+actions compactes : 👍 à voir, 👎 pas pour moi, 👁 déjà vu et ➤ envoyer à
+Radarr. Un deuxième clic sur l’une des trois décisions personnelles l’annule ;
+ces trois états sont mutuellement exclusifs.
+
+Les filtres deviennent une rangée de boutons à icônes avec compteurs : liste
+complète, à voir, déjà vus, pas pour moi et Radarr. L’icône Radar confirme
+uniquement que la demande a été envoyée à Radarr ; elle ne prétend toujours pas
+que le téléchargement est terminé.
 
 ## Mise à jour 0.13.0 — interface simplifiée et suggestions persistantes
 

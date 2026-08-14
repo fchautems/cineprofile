@@ -2,20 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pandas as pd
 import streamlit as st
 
 from cineprofile.preferences import (
     load_feedback,
-    load_radarr_attempts,
     load_radarr_requests,
-    record_radarr_attempt,
-    record_radarr_download,
-    remove_feedback,
-    remove_radarr_request,
-    save_feedback,
 )
-from cineprofile.radarr import RadarrClient
+from cineprofile.ui_recommendation_cards import render_recommendation_cards
 
 
 FEEDBACK_LABELS = {
@@ -23,8 +16,21 @@ FEEDBACK_LABELS = {
     "already_seen": "Déjà vu",
     "not_interested": "Pas intéressé",
 }
-LABEL_FEEDBACK = {label: action for action, label in FEEDBACK_LABELS.items()}
 FILTERS = ("Tous", "À voir", "Déjà vus", "Pas intéressé", "Radarr")
+FILTER_ICONS = {
+    "Tous": ":material/format_list_bulleted:",
+    "À voir": ":material/thumb_up:",
+    "Déjà vus": ":material/visibility:",
+    "Pas intéressé": ":material/thumb_down:",
+    "Radarr": ":material/radar:",
+}
+FILTER_HELP = {
+    "Tous": "Tous les films de Ma liste",
+    "À voir": "À voir",
+    "Déjà vus": "Déjà vus",
+    "Pas intéressé": "Pas pour moi",
+    "Radarr": "Envoyés à Radarr",
+}
 
 
 def load_my_movies(database: str | Path) -> list[dict]:
@@ -107,48 +113,6 @@ def filter_my_movies(
     return filtered
 
 
-def _clear_recommendation_state() -> None:
-    for key in (
-        "recommendations",
-        "recommendation_lists",
-        "recommendation_diagnostics",
-    ):
-        st.session_state.pop(key, None)
-
-
-def _send_to_radarr(
-    item: dict,
-    database: str | Path,
-    radarr_config: dict,
-) -> None:
-    try:
-        with RadarrClient(
-            radarr_config["url"],
-            radarr_config["api_key"],
-        ) as client:
-            result = client.add_movie(
-                int(item["tmdb_id"]),
-                root_folder_path=radarr_config["root_folder_path"],
-                quality_profile_id=int(radarr_config["quality_profile_id"]),
-            )
-    except Exception as exc:
-        record_radarr_attempt(
-            item,
-            "failed",
-            database,
-            error_message=str(exc),
-        )
-        st.error(f"Envoi à Radarr échoué : {exc}")
-    else:
-        record_radarr_download(
-            item,
-            result.movie_id,
-            database,
-            already_present=result.already_present,
-        )
-        st.rerun()
-
-
 def render_my_movies_tab(
     database: str | Path,
     *,
@@ -167,24 +131,31 @@ def render_my_movies_tab(
         )
         return
 
-    metrics = st.columns(4)
-    metrics[0].metric("Tous", len(movies))
-    metrics[1].metric(
-        "À voir",
-        sum(row["feedback_action"] == "watchlist" for row in movies),
-    )
-    metrics[2].metric(
-        "Déjà vus",
-        sum(row["feedback_action"] == "already_seen" for row in movies),
-    )
-    metrics[3].metric(
-        "Envoyés à Radarr",
-        sum(row["downloaded"] for row in movies),
-    )
+    counts = {
+        "Tous": len(movies),
+        "À voir": sum(row["feedback_action"] == "watchlist" for row in movies),
+        "Déjà vus": sum(
+            row["feedback_action"] == "already_seen" for row in movies
+        ),
+        "Pas intéressé": sum(
+            row["feedback_action"] == "not_interested" for row in movies
+        ),
+        "Radarr": sum(row["downloaded"] for row in movies),
+    }
+    status_filter = st.session_state.get("my_movies_filter", "Tous")
+    filter_columns = st.columns(len(FILTERS))
+    for column, filter_name in zip(filter_columns, FILTERS, strict=True):
+        if column.button(
+            f"{FILTER_ICONS[filter_name]} {counts[filter_name]}",
+            key=f"my_movies_filter_{filter_name}",
+            type="primary" if status_filter == filter_name else "secondary",
+            width="stretch",
+            help=FILTER_HELP[filter_name],
+        ):
+            st.session_state["my_movies_filter"] = filter_name
+            st.rerun()
 
-    filter_column, search_column = st.columns([1, 2])
-    status_filter = filter_column.selectbox("Afficher", FILTERS)
-    search = search_column.text_input(
+    search = st.text_input(
         "Chercher un film",
         placeholder="Titre…",
         key="my_movies_search",
@@ -195,113 +166,11 @@ def render_my_movies_tab(
         st.info("Aucun film ne correspond à ce filtre.")
         return
 
-    frame = pd.DataFrame(
-        [
-            {
-                "Film": row["title"],
-                "Année": row["year"],
-                "Statut": row["feedback_label"],
-                "Radarr": "Envoyé" if row["downloaded"] else "—",
-                "Mis à jour": str(row.get("updated_at") or "")[:19],
-            }
-            for row in visible
-        ]
+    render_recommendation_cards(
+        database,
+        movies,
+        visible,
+        len(visible),
+        view="my_list",
+        radarr_config=radarr_config,
     )
-    st.dataframe(frame, hide_index=True, width="stretch")
-
-    labels = {
-        f"{row['title']} ({row['year']}) · TMDB {row['tmdb_id']}": row
-        for row in visible
-    }
-    selected_label = st.selectbox(
-        "Modifier un film",
-        list(labels),
-        key="my_movies_selected",
-    )
-    selected = labels[selected_label]
-    with st.container(border=True):
-        st.markdown(f"### {selected['title']} ({selected['year']})")
-        if selected.get("overview"):
-            st.write(selected["overview"])
-        status_options = ["Aucun", "À voir", "Déjà vu", "Pas intéressé"]
-        current_label = selected["feedback_label"]
-        current_index = (
-            status_options.index(current_label)
-            if current_label in status_options
-            else 0
-        )
-        chosen_status = st.selectbox(
-            "Statut CineProfile",
-            status_options,
-            index=current_index,
-            key=f"my_movies_status_{selected['tmdb_id']}",
-        )
-        if st.button(
-            "Enregistrer le statut",
-            key=f"save_my_movie_{selected['tmdb_id']}",
-        ):
-            if chosen_status == "Aucun":
-                remove_feedback(int(selected["tmdb_id"]), database)
-            else:
-                save_feedback(selected, LABEL_FEEDBACK[chosen_status], database)
-            _clear_recommendation_state()
-            st.rerun()
-
-        st.divider()
-        if selected["downloaded"]:
-            st.success("Envoyé à Radarr")
-            st.caption(
-                "La recherche a été acceptée par Radarr — la présence du fichier "
-                "n’est pas encore vérifiée. Retirer ce marquage agit uniquement "
-                "dans CineProfile."
-            )
-            if st.button(
-                "Retirer le marquage Radarr",
-                key=f"clear_downloaded_{selected['tmdb_id']}",
-            ):
-                remove_radarr_request(int(selected["tmdb_id"]), database)
-                st.rerun()
-        else:
-            st.caption(
-                "Envoyer à Radarr active la surveillance et "
-                "lance sa recherche."
-            )
-            if st.button(
-                "Envoyer à Radarr",
-                key=f"download_my_movie_{selected['tmdb_id']}",
-                disabled=radarr_config is None,
-                help=(
-                    "Connecte d’abord Radarr dans Réglages."
-                    if radarr_config is None
-                    else "Envoyer ce film à Radarr."
-                ),
-            ):
-                _send_to_radarr(selected, database, radarr_config)
-
-    attempts = load_radarr_attempts(database, tmdb_id=int(selected["tmdb_id"]))
-    with st.expander(
-        f"Historique Radarr de ce film ({len(attempts)})",
-        expanded=False,
-    ):
-        if not attempts:
-            st.caption("Aucune tentative enregistrée.")
-        else:
-            outcome_labels = {
-                "accepted": "Accepté par Radarr",
-                "already_present": "Déjà présent dans Radarr",
-                "failed": "Échec",
-            }
-            st.dataframe(
-                pd.DataFrame(
-                    [
-                        {
-                            "Date": str(row["attempted_at"])[:19],
-                            "Résultat": outcome_labels[row["outcome"]],
-                            "Détail": row.get("error_message") or "",
-                        }
-                        for row in attempts
-                    ]
-                ),
-                hide_index=True,
-                width="stretch",
-            )

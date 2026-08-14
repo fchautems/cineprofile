@@ -11,9 +11,29 @@ from cineprofile.preferences import (
     load_radarr_requests,
     record_radarr_attempt,
     record_radarr_download,
+    remove_feedback,
     save_feedback,
 )
 from cineprofile.radarr import RadarrClient
+
+
+FEEDBACK_ACTIONS = {
+    "watchlist": {
+        "icon": ":material/thumb_up:",
+        "label": "À voir",
+        "help": "À voir. Cliquer à nouveau pour retirer cet état.",
+    },
+    "not_interested": {
+        "icon": ":material/thumb_down:",
+        "label": "Pas pour moi",
+        "help": "Pas pour moi. Cliquer à nouveau pour retirer cet état.",
+    },
+    "already_seen": {
+        "icon": ":material/visibility:",
+        "label": "Déjà vu",
+        "help": "Déjà vu. Cliquer à nouveau pour retirer cet état.",
+    },
+}
 
 
 def _remove_from_recommendation_state(tmdb_id: int) -> None:
@@ -34,6 +54,22 @@ def _remove_from_recommendation_state(tmdb_id: int) -> None:
         }
 
 
+def _set_feedback(
+    item: dict,
+    action: str,
+    existing_action: str | None,
+    database: str | Path,
+) -> None:
+    """Toggle one of the three mutually exclusive personal states."""
+    if existing_action == action:
+        remove_feedback(int(item["tmdb_id"]), database)
+    else:
+        save_feedback(item, action, database)
+    if action in {"not_interested", "already_seen"}:
+        _remove_from_recommendation_state(int(item["tmdb_id"]))
+    st.rerun()
+
+
 def render_recommendation_cards(
     database: str | Path,
     recommendations: list[dict],
@@ -44,6 +80,7 @@ def render_recommendation_cards(
     radarr_config: dict | None = None,
 ) -> None:
     is_safe = view == "safe"
+    is_my_list = view == "my_list"
     feedback = load_feedback(database)
     radarr_requests = load_radarr_requests(database)
     for item in visible[:visible_count]:
@@ -141,7 +178,18 @@ def render_recommendation_cards(
                 key=f"external_{view}_{item['tmdb_id']}",
             )
 
-            if is_safe:
+            existing_feedback = feedback.get(int(item["tmdb_id"]))
+            if is_my_list:
+                if existing_feedback:
+                    action_meta = FEEDBACK_ACTIONS[
+                        str(existing_feedback["action"])
+                    ]
+                    score_col.markdown(
+                        f"{action_meta['icon']} **{action_meta['label']}**"
+                    )
+                else:
+                    score_col.caption("Aucun état")
+            elif is_safe:
                 public_rating = float(
                     item.get(
                         "bayesian_rating",
@@ -183,7 +231,7 @@ def render_recommendation_cards(
                     "Affinité personnelle",
                     f"{item['affinity_index']:.0f}/100",
                 )
-            if item.get("personal_model_used") and not is_safe:
+            if item.get("personal_model_used") and not is_safe and not is_my_list:
                 base_rate = float(
                     item.get("base_like_rate_percent")
                     or 100.0 * float(item.get("base_like_rate") or 0.0)
@@ -205,62 +253,59 @@ def render_recommendation_cards(
                     f"· fourchette {item['prediction_low']:.1f}–"
                     f"{item['prediction_high']:.1f}"
                 )
-            score_col.caption(
-                f"Rang « {item.get('ranking_mode', 'Valeurs sûres')} » : "
-                f"{int(item.get('recommended_rank') or 0)}"
-            )
-            if not is_safe:
+            if not is_my_list:
+                score_col.caption(
+                    f"Rang « {item.get('ranking_mode', 'Valeurs sûres')} » : "
+                    f"{int(item.get('recommended_rank') or 0)}"
+                )
+            if not is_safe and not is_my_list:
                 score_col.caption(
                     f"Confiance {item['confidence_label']} "
                     f"({item['confidence']:.0f}/100)"
                 )
-            existing_feedback = feedback.get(int(item["tmdb_id"]))
-            if existing_feedback:
+            if existing_feedback and not is_my_list:
                 score_col.info(
-                    {
-                        "watchlist": "À voir",
-                        "not_interested": "Pas intéressé",
-                        "already_seen": "Déjà vu",
-                    }[existing_feedback["action"]]
+                    FEEDBACK_ACTIONS[str(existing_feedback["action"])]["label"]
                 )
 
             radarr_request = radarr_requests.get(int(item["tmdb_id"]))
             if radarr_request:
-                score_col.success("Envoyé à Radarr")
+                score_col.caption(":material/radar: Envoyé à Radarr")
 
             action_columns = st.columns(4)
-            if action_columns[0].button(
-                "À voir",
-                key=f"watchlist_{view}_{item['tmdb_id']}",
-                width="stretch",
+            existing_action = (
+                str(existing_feedback["action"])
+                if existing_feedback
+                else None
+            )
+            for column, action in zip(
+                action_columns[:3],
+                ("watchlist", "not_interested", "already_seen"),
+                strict=True,
             ):
-                save_feedback(item, "watchlist", database)
-                st.rerun()
-            if action_columns[1].button(
-                "Pas intéressé",
-                key=f"reject_{view}_{item['tmdb_id']}",
-                width="stretch",
-            ):
-                save_feedback(item, "not_interested", database)
-                _remove_from_recommendation_state(int(item["tmdb_id"]))
-                st.rerun()
-            if action_columns[2].button(
-                "Déjà vu",
-                key=f"seen_{view}_{item['tmdb_id']}",
-                width="stretch",
-            ):
-                save_feedback(item, "already_seen", database)
-                _remove_from_recommendation_state(int(item["tmdb_id"]))
-                st.rerun()
+                action_meta = FEEDBACK_ACTIONS[action]
+                if column.button(
+                    action_meta["icon"],
+                    key=f"{action}_{view}_{item['tmdb_id']}",
+                    type="primary" if existing_action == action else "secondary",
+                    width="stretch",
+                    help=action_meta["help"],
+                ):
+                    _set_feedback(item, action, existing_action, database)
             if action_columns[3].button(
-                "Envoyé à Radarr" if radarr_request else "Envoyer à Radarr",
+                ":material/radar:" if radarr_request else ":material/send:",
                 key=f"radarr_{view}_{item['tmdb_id']}",
+                type="primary" if radarr_request else "secondary",
                 width="stretch",
                 disabled=radarr_config is None or radarr_request is not None,
                 help=(
-                    "Connecte d’abord Radarr dans Réglages."
-                    if radarr_config is None
-                    else "Ajoute le film à Radarr et lance sa recherche."
+                    "Déjà envoyé à Radarr. L’état réel sera synchronisé ensuite."
+                    if radarr_request
+                    else (
+                        "Connecte d’abord Radarr dans Réglages."
+                        if radarr_config is None
+                        else "Envoyer à Radarr et lancer sa recherche."
+                    )
                 ),
             ):
                 try:
@@ -291,6 +336,9 @@ def render_recommendation_cards(
                         already_present=result.already_present,
                     )
                     st.rerun()
+
+            if is_my_list:
+                continue
 
             if item.get("providers_ch"):
                 st.caption(

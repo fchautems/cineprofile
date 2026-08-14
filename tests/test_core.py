@@ -627,7 +627,11 @@ def test_recommendation_card_renders_with_explanation(
         and metric.value == "7.2/10"
         for metric in app.metric
     )
-    next(button for button in app.button if button.label == "Pas intéressé").click()
+    next(
+        button
+        for button in app.button
+        if button.label == ":material/thumb_down:"
+    ).click()
     app.run(timeout=15)
     assert load_feedback(database)[1]["action"] == "not_interested"
 
