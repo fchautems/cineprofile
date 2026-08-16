@@ -25,8 +25,6 @@ from .candidate_pool import (
     SOURCE_SEMANTIC,
     balanced_candidate_order,
     build_candidate_pool,
-    personalize_candidate_order,
-    quota_candidate_order,
     retrieval_bucket_counts,
     split_candidate_lanes,
 )
@@ -35,11 +33,10 @@ from .diagnostics import configure_logging
 from .personal_model import LIKE_THRESHOLD, _load_training_items
 from .profile import build_profile
 from .recommender import SEARCH_DEPTHS
-from .semantic import semantic_evidence
 
 
 VIVIER_AUDIT_SCHEMA_VERSION = 1
-VIVIER_AUDIT_VERSION = "cineprofile-vivier-audit-1.3"
+VIVIER_AUDIT_VERSION = "cineprofile-vivier-audit-1.4"
 DEFAULT_BUDGETS = (100, 300, 500)
 DEFAULT_PERIOD_YEARS = 3
 ProgressCallback = Callable[[int, int, str], None]
@@ -162,7 +159,7 @@ def _without_source(candidates: list[dict], removed_source: str) -> list[dict]:
         if SOURCE_SEMANTIC in candidate.get("_sources", []):
             sources.append(SOURCE_SEMANTIC)
         remaining.append({**candidate, "_sources": sources})
-    return quota_candidate_order(balanced_candidate_order(remaining))
+    return balanced_candidate_order(remaining)
 
 
 def evaluate_vivier_pool(
@@ -584,33 +581,10 @@ def run_vivier_audit(
                 eligible_targets,
                 budgets=budgets,
             )
-            retrieval_evidence = semantic_evidence(
-                snapshot,
-                candidates,
-                float(profile["summary"]["average_rating"]),
-                enabled=True,
-            )
-            recent_candidates, semantic_count = personalize_candidate_order(
-                recent_candidates,
-                retrieval_evidence,
-                maximum_semantic_source=max(
-                    40,
-                    int(SEARCH_DEPTHS[depth]["analysis_limit"]) // 2,
-                ),
-            )
-            classic_candidates, classic_semantic_count = (
-                personalize_candidate_order(
-                    classic_candidates,
-                    retrieval_evidence,
-                    maximum_semantic_source=max(
-                        20,
-                        int(
-                            SEARCH_DEPTHS[depth]["classic_analysis_limit"]
-                        )
-                        // 2,
-                    ),
-                )
-            )
+            # Compatibilité du schéma 1.x : ces étapes restent présentes dans
+            # le rapport, mais elles sont désormais identiques à l'ordre de
+            # production équilibré. L'audit 1.3 a établi que le tri sémantique
+            # dégradait le rappel et que les quotas avaient un gain nul.
             pre_quota_metrics = _retrieval_metrics(
                 recent_candidates,
                 targets,
@@ -621,16 +595,15 @@ def run_vivier_audit(
                 eligible_targets,
                 budgets=budgets,
             )
-            recent_candidates = quota_candidate_order(recent_candidates)
             _update_trace_lanes(
                 recent_candidates,
                 classic_candidates,
                 diagnostics,
             )
-            diagnostics["semantic_retrieval_candidates"] = semantic_count
-            diagnostics["semantic_classic_candidates"] = (
-                classic_semantic_count
-            )
+            diagnostics["candidate_order"] = "balanced_sources_v0161"
+            diagnostics["semantic_retrieval_enabled"] = False
+            diagnostics["semantic_retrieval_candidates"] = 0
+            diagnostics["semantic_classic_candidates"] = 0
             diagnostics["recent_lane_candidates"] = len(recent_candidates)
             diagnostics["classic_lane_candidates"] = len(classic_candidates)
             diagnostics["retrieval_bucket_counts_at_300"] = (
@@ -711,9 +684,10 @@ def run_vivier_audit(
             "reliability": reliability,
             "release_period_years": period_years,
             "ranking_excluded": True,
-            "semantic_retrieval_included": True,
-            "semantic_is_ordering_signal_only": True,
-            "retrieval_quota_order_included": True,
+            "candidate_order": "balanced_sources_v0161",
+            "semantic_retrieval_included": False,
+            "semantic_is_ordering_signal_only": False,
+            "retrieval_quota_order_included": False,
             "strict_release_period": True,
             "classic_lane_separate": True,
             "genre_exclusions_disabled": True,

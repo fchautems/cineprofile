@@ -1,6 +1,6 @@
 # CineProfile
 
-Version actuelle : **0.16.0**. L’écran permanent **Ma liste** rassemble les
+Version actuelle : **0.16.1**. L’écran permanent **Ma liste** rassemble les
 films marqués à voir, écartés, vus et envoyés à Radarr. Les décisions se font
 directement sur les cartes, sont réversibles, et restent visibles dans la liste.
 
@@ -16,6 +16,19 @@ réutilisables :
 
 Le CSV n’est donc pas le modèle : c’est l’historique initial. La base enrichie
 devient la mémoire durable de l’outil.
+
+## Correctif 0.16.1 — conserver l’ordre qui gagne l’audit
+
+L’audit 1.3 a isolé précisément les étapes du vivier : l’ordre équilibré brut
+retrouvait 61 films 8+ sur 100 à 300 candidats et 66 à 500. Le tri sémantique
+faisait retomber ces résultats à 54 et 65, tandis que les quotas n’ajoutaient
+aucun film.
+
+La présélection utilise donc maintenant directement l’ordre équilibré des
+sources, sans tri sémantique ni quotas supplémentaires. La compréhension
+sémantique reste active après l’enrichissement pour noter, classer et expliquer
+les suggestions finales. L’audit 1.4 vérifie désormais exactement cet ordre de
+production.
 
 ## Mise à jour 0.16.0 — période stricte et classiques séparés
 

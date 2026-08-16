@@ -472,7 +472,7 @@ def test_version_mismatch_is_reported_cleanly() -> None:
         unpack_recommendation_run([{"title": "ancien résultat"}])
 
     current_module = ModuleType("current_recommender")
-    current_module.RECOMMENDATION_PROTOCOL = 16
+    current_module.RECOMMENDATION_PROTOCOL = 17
     ensure_recommendation_protocol(current_module)
     assert unpack_recommendation_run(([{"title": "ok"}], {"returned": 1}))[1][
         "returned"
@@ -636,7 +636,7 @@ def test_recommendation_card_renders_with_explanation(
     import_ratings(SAMPLE, database)
     build_profile(database)
     app = AppTest.from_file(str(ROOT / "app.py"))
-    app.session_state["recommendation_ui_protocol"] = 16
+    app.session_state["recommendation_ui_protocol"] = 17
     app.session_state["recommendations"] = [
         {
             "tmdb_id": 1,
@@ -963,6 +963,116 @@ def test_recent_and_classic_enrichment_budgets_are_independent(
     assert diagnostics["selected_classics_for_enrichment"] == 1
     assert [item["tmdb_id"] for item in lists["safe"]] == [2025]
     assert [item["tmdb_id"] for item in lists["classics"]] == [1940]
+
+
+def test_enrichment_keeps_balanced_order_before_semantic_scoring(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    database = tmp_path / "balanced-before-semantic.db"
+    import_ratings(SAMPLE, database)
+    profile = build_profile(database)
+    released = date.today().isoformat()
+    candidates = [
+        {
+            "id": candidate_id,
+            "title": f"Film {candidate_id}",
+            "release_date": released,
+            "vote_count": 10_000,
+            "popularity": popularity,
+            "_sources": [SOURCE_POPULARITY],
+        }
+        for candidate_id, popularity in ((7001, 100), (7002, 90))
+    ]
+    monkeypatch.setattr(
+        recommender_module,
+        "_candidate_pool",
+        lambda *_args, **_kwargs: (
+            candidates,
+            {SOURCE_POPULARITY: 2},
+            {
+                "raw_unique_candidates": 2,
+                "excluded_outside_window": 0,
+                "excluded_insufficient_votes": 0,
+                "excluded_genres": 0,
+                "after_pre_enrichment_filters": 2,
+            },
+        ),
+    )
+    semantic_calls: list[list[int]] = []
+
+    def fake_semantic_evidence(
+        _database,
+        items,
+        _baseline,
+        *,
+        enabled,
+    ):
+        assert enabled
+        semantic_calls.append([int(item["id"]) for item in items])
+        return {
+            int(item["id"]): {
+                "score": 0.95 if int(item["id"]) == 7002 else 0.05,
+                "predicted_rating": 9.5 if int(item["id"]) == 7002 else 5.0,
+                "base_like_rate": 0.20,
+                "confidence": 0.90,
+                "similarity": 0.80,
+                "positive_similarity": 0.80,
+                "negative_similarity": 0.0,
+                "neighbors": [],
+                "engine": "semantic",
+            }
+            for item in items
+        }
+
+    monkeypatch.setattr(
+        recommender_module,
+        "semantic_evidence",
+        fake_semantic_evidence,
+    )
+
+    class FakeClient:
+        language = "fr-FR"
+        region = "CH"
+
+        def __init__(self) -> None:
+            self.details_calls: list[int] = []
+
+        def details(self, _media_type, tmdb_id):
+            self.details_calls.append(tmdb_id)
+            return {
+                "id": tmdb_id,
+                "title": f"Film {tmdb_id}",
+                "release_date": released,
+                "overview": "Une histoire test.",
+                "genres": [],
+                "credits": {"cast": [], "crew": []},
+                "keywords": {"keywords": []},
+                "external_ids": {"imdb_id": f"tt8{tmdb_id:06d}"},
+                "watch/providers": {"results": {}},
+                "vote_average": 8.0,
+                "vote_count": 10_000,
+            }
+
+    client = FakeClient()
+    results, diagnostics = recommend_movies(
+        client,
+        profile,
+        database,
+        start_date=(date.today() - timedelta(days=365)).isoformat(),
+        end_date=released,
+        depth="Rapide",
+        reliability="Forte",
+        semantic_enabled=True,
+        analysis_limit=1,
+    )
+
+    assert client.details_calls == [7001]
+    assert semantic_calls == [[7001]]
+    assert [item["tmdb_id"] for item in results] == [7001]
+    assert diagnostics["candidate_order"] == "balanced_sources_v0161"
+    assert not diagnostics["semantic_retrieval_enabled"]
+    assert diagnostics["semantic_final_scoring_enabled"]
 
 
 def test_actor_seen_only_three_times_does_not_influence_affinity(
@@ -2501,7 +2611,7 @@ def test_recommendations_use_calibrated_personal_prediction(
     monkeypatch.setenv("CINEPROFILE_DB", str(database))
     monkeypatch.setenv("TMDB_TOKEN", "fake-test-token")
     app = AppTest.from_file(str(ROOT / "app.py"))
-    app.session_state["recommendation_ui_protocol"] = 16
+    app.session_state["recommendation_ui_protocol"] = 17
     app.session_state["recommendations"] = [result]
     app.session_state["recommendation_lists"] = {
         "safe": [],

@@ -696,9 +696,8 @@ def render_recommendations_tab(
                     diagnostics["returned"],
                 )
                 st.caption(
-                    "Repérés par proximité d’histoire avant enrichissement : "
-                    f"{int(diagnostics.get('semantic_retrieval_candidates', 0))} "
-                    "· candidats issus uniquement de la popularité : "
+                    "Vivier ordonné par équilibre des sources · "
+                    "candidats issus uniquement de la popularité : "
                     f"{100 * float(diagnostics.get('popularity_only_selected_share', 0)):.0f}%."
                 )
                 if diagnostics.get("selected_classics_for_enrichment"):

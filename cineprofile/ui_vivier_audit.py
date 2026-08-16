@@ -75,14 +75,23 @@ def _render_report(path: Path, payload: dict) -> None:
             f"{eligible_present}/{eligible_total} film(s) 8+ présent(s) "
             "quelque part avant la limite d’analyse."
         )
-    semantic_gain = summary.get("eligible_semantic_gain_at_300")
-    quota_gain = summary.get("eligible_quota_gain_at_300")
-    if semantic_gain is not None and quota_gain is not None:
+    candidate_order = (payload.get("methodology") or {}).get(
+        "candidate_order"
+    )
+    if candidate_order == "balanced_sources_v0161":
         st.caption(
-            "Effet exact à 300 sur les films de la période : "
-            f"sémantique {int(semantic_gain):+d} · "
-            f"quotas {int(quota_gain):+d}."
+            "Ordre du vivier : équilibre direct des sources. Le sémantique "
+            "intervient seulement après l’enrichissement."
         )
+    else:
+        semantic_gain = summary.get("eligible_semantic_gain_at_300")
+        quota_gain = summary.get("eligible_quota_gain_at_300")
+        if semantic_gain is not None and quota_gain is not None:
+            st.caption(
+                "Effet exact à 300 sur les films de la période : "
+                f"sémantique {int(semantic_gain):+d} · "
+                f"quotas {int(quota_gain):+d}."
+            )
     classic_target_count = int(summary.get("classic_target_count") or 0)
     if classic_target_count:
         st.caption(

@@ -15,8 +15,6 @@ from .candidate_pool import (
     build_candidate_pool,
     favorite_seeds as _favorite_seeds,  # noqa: F401
     passes_date_filter as _passes_date_filter,  # noqa: F401
-    personalize_candidate_order,
-    quota_candidate_order,
     retrieval_bucket_counts,
     selected_source_counts,
     split_candidate_lanes,
@@ -43,7 +41,7 @@ from .tmdb import TmdbClient, enrich_candidates
 from .watch_interest import score_watch_interest
 
 
-RECOMMENDATION_PROTOCOL = 16
+RECOMMENDATION_PROTOCOL = 17
 PERSONAL_RANKER_VERSION = "cineprofile-local-ranker-0.11.0"
 LOCAL_NEIGHBOR_WEIGHT = 0.65
 GLOBAL_MODEL_WEIGHT = 0.35
@@ -1304,24 +1302,12 @@ def recommend_movies(
         start_date=start_date,
         end_date=end_date,
     )
-    retrieval_evidence = semantic_evidence(
-        database,
-        unseen,
-        float(profile["summary"]["average_rating"]),
-        enabled=semantic_enabled,
-    )
-    recent_unseen, recent_semantic_count = personalize_candidate_order(
-        recent_unseen,
-        retrieval_evidence,
-        maximum_semantic_source=max(40, limit // 2),
-    )
     classic_limit = int(SEARCH_DEPTHS[depth]["classic_analysis_limit"])
-    classic_unseen, classic_semantic_count = personalize_candidate_order(
-        classic_unseen,
-        retrieval_evidence,
-        maximum_semantic_source=max(20, classic_limit // 2),
-    )
-    recent_unseen = quota_candidate_order(recent_unseen)
+    # L'audit 0.16.0 a mesuré le même vivier aux trois étapes : l'ordre
+    # équilibré retrouvait 61 films 8+ à 300, contre 54 après le tri
+    # sémantique. Les quotas n'ajoutaient ensuite aucun film. Les deux voies
+    # conservent donc ici l'ordre équilibré produit par build_candidate_pool.
+    # Le sémantique reste utilisé après enrichissement dans score_candidates.
     for candidate in recent_unseen:
         candidate["_recommendation_lane"] = "recent"
     for candidate in classic_unseen:
@@ -1401,8 +1387,11 @@ def recommend_movies(
         "selected_source_counts": analysis_source_counts,
         "selected_classic_source_counts": classic_source_counts,
         "selected_retrieval_buckets": analysis_bucket_counts,
-        "semantic_retrieval_candidates": recent_semantic_count,
-        "semantic_classic_candidates": classic_semantic_count,
+        "candidate_order": "balanced_sources_v0161",
+        "semantic_retrieval_enabled": False,
+        "semantic_final_scoring_enabled": semantic_enabled,
+        "semantic_retrieval_candidates": 0,
+        "semantic_classic_candidates": 0,
         "classic_analysis_limit": classic_limit,
         "popularity_only_selected": popularity_only_selected,
         "popularity_only_selected_share": round(
