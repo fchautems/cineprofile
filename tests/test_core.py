@@ -273,7 +273,7 @@ def test_streamlit_app_starts(tmp_path: Path, monkeypatch) -> None:
     app = AppTest.from_file(str(ROOT / "app.py"))
     app.run(timeout=15)
     assert not app.exception
-    assert app.title[0].value == "CineProfile"
+    assert any("CineProfile" in block.value for block in app.markdown)
     assert any(field.label == "Clé TMDB" for field in app.text_input)
     assert any(button.label == "Enregistrer" for button in app.button)
 
@@ -345,7 +345,7 @@ def test_streamlit_renders_only_my_list_when_selected(
     next(
         button
         for button in app.button
-        if button.label == "Pas intéressé"
+        if button.label == "👎 Pas intéressé"
     ).click()
     app.run(timeout=15)
     assert load_feedback(database)[991]["action"] == "not_interested"
@@ -353,7 +353,7 @@ def test_streamlit_renders_only_my_list_when_selected(
     next(
         button
         for button in app.button
-        if button.label == "À voir"
+        if button.label == "👍 À voir"
     ).click()
     app.run(timeout=15)
     assert load_feedback(database)[991]["action"] == "watchlist"
@@ -686,7 +686,7 @@ def test_recommendation_card_renders_with_explanation(
     next(
         button
         for button in app.button
-        if button.label == "Pas intéressé"
+        if button.label == "👎 Pas intéressé"
     ).click()
     app.run(timeout=15)
     assert load_feedback(database)[1]["action"] == "not_interested"

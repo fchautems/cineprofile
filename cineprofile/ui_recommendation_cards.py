@@ -20,18 +20,15 @@ from cineprofile.radarr_status import radarr_status_meta
 
 FEEDBACK_ACTIONS = {
     "watchlist": {
-        "icon": ":material/thumb_up:",
-        "label": "À voir",
+        "label": "👍 À voir",
         "help": "À voir. Cliquer à nouveau pour retirer cet état.",
     },
     "not_interested": {
-        "icon": ":material/thumb_down:",
-        "label": "Pas intéressé",
+        "label": "👎 Pas intéressé",
         "help": "Pas intéressé. Cliquer à nouveau pour retirer cet état.",
     },
     "already_seen": {
-        "icon": ":material/visibility:",
-        "label": "Déjà vu",
+        "label": "👁 Déjà vu",
         "help": "Déjà vu. Cliquer à nouveau pour retirer cet état.",
     },
 }
@@ -232,7 +229,7 @@ def render_recommendation_cards(
                         str(existing_feedback["action"])
                     ]
                     score_col.markdown(
-                        f"{action_meta['icon']} **{action_meta['label']}**"
+                        f"**{action_meta['label']}**"
                     )
                 else:
                     score_col.caption("Aucun état")
@@ -311,8 +308,7 @@ def render_recommendation_cards(
                 action_meta = FEEDBACK_ACTIONS[action]
                 active = existing_action == action
                 action_row.button(
-                    "Annuler" if active else action_meta["label"],
-                    icon=":material/undo:" if active else action_meta["icon"],
+                    "↩️ Annuler" if active else action_meta["label"],
                     key=f"{action}_{view}_{item['tmdb_id']}",
                     type="primary" if active else "secondary",
                     help=action_meta["help"],
@@ -330,19 +326,18 @@ def render_recommendation_cards(
                 "missing",
                 "unmonitored",
             }
-            _status_color, status_icon, status_label = radarr_status_meta(
+            _status_color, _status_icon, status_label = radarr_status_meta(
                 radarr_state
             )
             action_row.button(
                 (
-                    "Relancer"
+                    "↻ Relancer"
                     if retryable
-                    else (status_label if radarr_request else "Télécharger")
-                ),
-                icon=(
-                    ":material/replay:"
-                    if retryable
-                    else (status_icon if radarr_request else ":material/download:")
+                    else (
+                        status_label
+                        if radarr_request
+                        else "⬇️ Télécharger"
+                    )
                 ),
                 key=f"radarr_{view}_{item['tmdb_id']}",
                 type="primary" if radarr_request else "secondary",

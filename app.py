@@ -77,10 +77,21 @@ st.markdown(
         background: #fffdf8; border: 1px solid #e4dfd2;
         border-radius: 16px; padding: 14px 16px;
       }
-      .cp-kicker { color:#c44a34; text-transform:uppercase; letter-spacing:.16em;
-        font-weight:750; font-size:.74rem; }
-      .cp-intro { color:#66685f; max-width:780px; font-size:1.08rem;
-        line-height:1.58; margin-bottom:1.4rem; }
+      .cp-brand { display:flex; align-items:baseline; gap:.8rem; margin-bottom:.25rem; }
+      .cp-brand strong { font-size:1.55rem; letter-spacing:-.035em; }
+      .cp-brand span { color:#66685f; font-size:.9rem; }
+      [class*="st-key-watchlist_"] button[kind="secondary"] {
+        background:#eaf7ed; border-color:#8ccf9a; color:#176b2b;
+      }
+      [class*="st-key-not_interested_"] button[kind="secondary"] {
+        background:#fff0f1; border-color:#efa4aa; color:#a40e1b;
+      }
+      [class*="st-key-already_seen_"] button[kind="secondary"] {
+        background:#edf5ff; border-color:#9bc5f4; color:#075caf;
+      }
+      [class*="st-key-radarr_"] button[kind="secondary"] {
+        background:#f4efff; border-color:#c5acf4; color:#6639ad;
+      }
       [class*="st-key-watchlist_"] button[kind="primary"] {
         background:#238636; border-color:#238636; color:white;
       }
@@ -105,13 +116,11 @@ st.markdown(
 )
 
 
-st.markdown('<div class="cp-kicker">Profil local & explicable</div>', unsafe_allow_html=True)
-st.title("CineProfile")
 st.markdown(
     """
-    <div class="cp-intro">
-    Découvre des films, garde ceux qui comptent dans ta liste et envoie-les à
-    Radarr quand tu veux les voir.
+    <div class="cp-brand">
+      <strong>CineProfile</strong>
+      <span>Tes films, ton profil, ta liste.</span>
     </div>
     """,
     unsafe_allow_html=True,

@@ -22,6 +22,7 @@ def filter_recommendations(
     minimum_score: float,
     minimum_interest: float = 0,
     minimum_public_rating: float = 0,
+    minimum_imdb_rating: float = 0,
     genres: set[str],
     platforms: set[str],
     languages: set[str],
@@ -42,6 +43,11 @@ def filter_recommendations(
             )
             or 0
         ) < minimum_public_rating:
+            continue
+        imdb_rating = item.get("imdb_rating")
+        if minimum_imdb_rating > 0 and (
+            imdb_rating is None or float(imdb_rating) < minimum_imdb_rating
+        ):
             continue
         if genres and not (set(item.get("genres", [])) & genres):
             continue

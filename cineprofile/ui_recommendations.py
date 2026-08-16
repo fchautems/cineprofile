@@ -6,12 +6,12 @@ import logging
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
-import pandas as pd
 import streamlit as st
 
 from cineprofile import __version__
 from cineprofile.compat import CineProfileVersionMismatch, unpack_recommendation_run
 from cineprofile.genre_catalog import TMDB_EXCLUDABLE_GENRES
+from cineprofile.imdb_ratings import hydrate_imdb_ratings
 from cineprofile.preferences import load_feedback, load_radarr_requests
 from cineprofile.radarr_status import active_radarr_ids, without_active_radarr_movies
 from cineprofile.radarr_sync import synchronize_radarr_catalog
@@ -93,9 +93,6 @@ def _render_recommendation_list(
     view: str,
     recommendations: list[dict],
     all_recommendations: list[dict],
-    diagnostics: dict | None,
-    diagnostic_download_payload: dict | None,
-    diagnostic_download_name: str | None,
     radarr_config: dict | None,
 ) -> None:
     is_classic = view == "classics"
@@ -113,15 +110,6 @@ def _render_recommendation_list(
         )
         return
 
-    st.caption(
-        {
-            "classics": "Des films plus anciens, avec un budget séparé.",
-            "safe": "Le meilleur équilibre entre qualité publique et envie personnelle.",
-            "discovery": "Des pistes plus personnelles et moins évidentes.",
-        }[view]
-    )
-
-    st.caption("Affiner les résultats")
     available_genres = sorted(
         {
             genre
@@ -168,81 +156,66 @@ def _render_recommendation_list(
         available_languages,
         key=f"{key_prefix}_languages",
     )
-    minimum_public_rating = filter_columns[3].slider(
-        "Note minimale",
+    minimum_imdb_rating = filter_columns[3].slider(
+        "Note IMDb min.",
         0.0,
         10.0,
         0.0,
         0.1,
-        key=f"{key_prefix}_minimum_public",
-        help="Note publique corrigée minimale.",
+        key=f"{key_prefix}_minimum_imdb",
+        help=(
+            "Note IMDb minimale. Les films sans note IMDb sont masqués "
+            "dès qu’une valeur supérieure à 0 est choisie."
+        ),
     )
     minimum_score = 0
     minimum_interest = 0
-    learned_results = any(
-        item.get("personal_model_used") for item in recommendations
+    sort_options = [
+        "Ordre conseillé",
+        "Envie estimée",
+        "Note IMDb",
+        "Votes IMDb",
+        "Confiance",
+        "Date de sortie",
+        "Durée",
+        "Titre",
+    ]
+    sort_columns = st.columns([2.2, 1.2, 1.0], vertical_alignment="bottom")
+    sort_choice = sort_columns[0].selectbox(
+        "Tri",
+        sort_options,
+        index=0,
+        key=f"{key_prefix}_sort",
     )
-
-    if is_safe:
-        sort_options = [
-            "Ordre conseillé",
-            "Note publique corrigée",
-            "Fiabilité de la note publique",
-            "Nombre de votes",
-            "Date de sortie",
-            "Durée",
-            "Titre",
-        ]
-    else:
-        sort_options = [
-            "Ordre conseillé",
-            "Indice d’envie",
-            (
-                "Chance d’un 8+"
-                if learned_results
-                else "Affinité personnelle"
-            ),
-            "Note personnelle prévue",
-            "Confiance",
-            "Note publique corrigée",
-            "Nombre de votes",
-            "Date de sortie",
-            "Durée",
-            "Titre",
-        ]
-    with st.popover("Filtres avancés", icon=":material/tune:"):
-        wanted_platforms = st.multiselect(
-            "Plateformes CH",
-            available_platforms,
-            key=f"{key_prefix}_platforms",
-        )
-        availability = st.selectbox(
-            "Disponibilité",
-            [
-                "Toutes",
-                "Incluse/Gratuite",
-                "Location/Achat",
-                "Disponible en CH",
-            ],
-            key=f"{key_prefix}_availability",
-        )
-        sort_choice = st.selectbox(
-            "Trier par",
-            sort_options,
-            index=0,
-            key=f"{key_prefix}_sort",
-        )
-        descending = st.toggle(
-            "Ordre décroissant",
-            value=True,
-            key=f"{key_prefix}_descending",
-        )
+    descending = sort_columns[1].toggle(
+        "Décroissant",
+        value=True,
+        key=f"{key_prefix}_descending",
+        disabled=sort_choice == "Ordre conseillé",
+    )
+    with sort_columns[2]:
+        with st.popover("Filtres avancés", icon=":material/tune:"):
+            wanted_platforms = st.multiselect(
+                "Plateformes CH",
+                available_platforms,
+                key=f"{key_prefix}_platforms",
+            )
+            availability = st.selectbox(
+                "Disponibilité",
+                [
+                    "Toutes",
+                    "Incluse/Gratuite",
+                    "Location/Achat",
+                    "Disponible en CH",
+                ],
+                key=f"{key_prefix}_availability",
+            )
 
     visible = filter_recommendations(
         recommendations,
         minimum_score=minimum_score,
         minimum_interest=minimum_interest,
-        minimum_public_rating=minimum_public_rating,
+        minimum_imdb_rating=minimum_imdb_rating,
         genres=set(wanted_genres),
         platforms=set(wanted_platforms),
         languages=set(wanted_languages),
@@ -251,15 +224,11 @@ def _render_recommendation_list(
     )
 
     sort_fields = {
-        "Affinité personnelle": "affinity_index",
-        "Chance d’un 8+": "like_probability",
         "Ordre conseillé": "recommended_rank",
-        "Indice d’envie": "interest_score",
-        "Note personnelle prévue": "predicted_rating",
+        "Envie estimée": "interest_score",
+        "Note IMDb": "imdb_rating",
+        "Votes IMDb": "imdb_vote_count",
         "Confiance": "confidence",
-        "Note publique corrigée": "bayesian_rating",
-        "Fiabilité de la note publique": "public_rating_reliability",
-        "Nombre de votes": "vote_count",
         "Date de sortie": "release_date",
         "Durée": "runtime_minutes",
         "Titre": "title",
@@ -277,7 +246,7 @@ def _render_recommendation_list(
                 "view": view,
                 "score": minimum_score,
                 "interest": minimum_interest,
-                "public_rating": minimum_public_rating,
+                "imdb_rating": minimum_imdb_rating,
                 "genres": wanted_genres,
                 "platforms": wanted_platforms,
                 "availability": availability,
@@ -295,9 +264,11 @@ def _render_recommendation_list(
         st.session_state[signature_key] = filter_signature
         st.session_state[visible_count_key] = 20
     visible_count = int(st.session_state.get(visible_count_key, 20))
+    film_label = "film" if len(visible) == 1 else "films"
+    shown_count = min(visible_count, len(visible))
+    shown_label = "affiché" if shown_count == 1 else "affichés"
     st.caption(
-        f"{len(visible)} suggestion(s) après filtrage · "
-        f"{min(visible_count, len(visible))} affichée(s)"
+        f"{len(visible)} {film_label} · {shown_count} {shown_label}"
     )
 
     render_recommendation_cards(
@@ -330,7 +301,7 @@ def render_recommendations_tab(
     radarr_config: dict | None = None,
 ) -> None:
     st.subheader("Suggestions", anchor=False)
-    st.caption("Des films choisis pour toi, avec un score clair et un état à jour.")
+    st.caption("Choisis, classe ou envoie un film à Radarr.")
     _restore_saved_selection(database, profile)
     if not profile:
         st.info("Calcule d’abord le profil.")
@@ -340,12 +311,6 @@ def render_recommendations_tab(
         recommendations = []
     else:
         existing_selection = st.session_state.get("recommendations", [])
-        updated_at = st.session_state.get("recommendation_updated_at")
-        if existing_selection and updated_at:
-            st.caption(
-                "Dernière sélection conservée · "
-                + str(updated_at).replace("T", " ")[:19]
-            )
         search_label = "Actualiser" if existing_selection else "Créer"
         setting_columns = st.columns([2.2, 2.0, 1.0], vertical_alignment="bottom")
         period_choice = setting_columns[0].selectbox(
@@ -497,6 +462,20 @@ def render_recommendations_tab(
                 st.session_state["visible_results_count_classics"] = 20
 
         recommendations = st.session_state.get("recommendations", [])
+        if recommendations:
+            try:
+                recommendations, imdb_updated = hydrate_imdb_ratings(
+                    recommendations,
+                    database,
+                )
+            except Exception as exc:
+                logger.warning("imdb_ratings_unavailable | error=%s", exc)
+            else:
+                if imdb_updated:
+                    st.session_state["recommendations"] = recommendations
+                    st.session_state["recommendation_lists"] = (
+                        build_recommendation_lists(recommendations)
+                    )
         visible_recommendations = _exclude_radarr_movies(
             database,
             recommendations,
@@ -521,165 +500,6 @@ def render_recommendations_tab(
                 "Radarr est momentanément injoignable ; les derniers états "
                 "connus restent appliqués."
             )
-        diagnostics = st.session_state.get("recommendation_diagnostics")
-        diagnostic_download_payload = None
-        diagnostic_download_name = None
-        if False and diagnostics:  # Les diagnostics sont rendus dans Réglages.
-            search_settings = diagnostics.get("settings", {})
-            with st.expander("Diagnostic de cette recherche", expanded=False):
-                st.write(
-                    f"Période réellement appliquée : "
-                    f"**{diagnostics['window_start']} → "
-                    f"{diagnostics['window_end']}**"
-                )
-                diagnostic_columns = st.columns(4)
-                diagnostic_columns[0].metric(
-                    "Vivier unique",
-                    diagnostics["unique_candidates"],
-                )
-                diagnostic_columns[1].metric(
-                    "Déjà vus/refusés exclus",
-                    int(diagnostics["excluded_already_seen_tmdb"])
-                    + int(diagnostics["excluded_already_seen_imdb"])
-                    + int(diagnostics.get("excluded_by_feedback", 0)),
-                )
-                diagnostic_columns[2].metric(
-                    "Fiches en cache",
-                    diagnostics["cache_hits"],
-                )
-                diagnostic_columns[3].metric(
-                    "Films analysés",
-                    diagnostics["returned"],
-                )
-                st.caption(
-                    "Vivier ordonné par équilibre des sources · "
-                    "candidats issus uniquement de la popularité : "
-                    f"{100 * float(diagnostics.get('popularity_only_selected_share', 0)):.0f}%."
-                )
-                if diagnostics.get("selected_classics_for_enrichment"):
-                    st.caption(
-                        "Budgets indépendants : "
-                        f"{int(diagnostics.get('selected_recent_for_enrichment', 0))} "
-                        "films récents · "
-                        f"{int(diagnostics.get('selected_classics_for_enrichment', 0))} "
-                        "classiques."
-                    )
-                st.dataframe(
-                    pd.DataFrame(
-                        [
-                            {
-                                "Étape avant enrichissement": "Hors période",
-                                "Nombre": diagnostics.get(
-                                    "excluded_outside_window", 0
-                                ),
-                            },
-                            {
-                                "Étape avant enrichissement": "Votes insuffisants",
-                                "Nombre": diagnostics.get(
-                                    "excluded_insufficient_votes", 0
-                                ),
-                            },
-                            {
-                                "Étape avant enrichissement": "Genres exclus",
-                                "Nombre": diagnostics.get(
-                                    "excluded_genres", 0
-                                ),
-                            },
-                            {
-                                "Étape avant enrichissement": "Candidats restants",
-                                "Nombre": diagnostics.get(
-                                    "after_pre_enrichment_filters", 0
-                                ),
-                            },
-                        ]
-                    ),
-                    hide_index=True,
-                    width="stretch",
-                )
-                st.dataframe(
-                    pd.DataFrame(
-                        [
-                            {
-                                "Source": name,
-                                "Candidats bruts": count,
-                                "Retenus pour analyse": diagnostics.get(
-                                    "selected_source_counts", {}
-                                ).get(name, 0),
-                            }
-                            for name, count in diagnostics["source_counts"].items()
-                        ]
-                    ),
-                    hide_index=True,
-                    width="stretch",
-                )
-                personal_engine = diagnostics.get("personal_engine")
-                if personal_engine:
-                    st.caption(
-                        "Moteur personnel utilisé pour tous les résultats : "
-                        + (
-                            str(diagnostics.get("personal_variant_label"))
-                            if personal_engine == "personal_v09"
-                            else {
-                                "linear_v06": "v0.6 linéaire",
-                                "islands_v07": "v0.7 par îlots",
-                                "legacy_v05": "indice historique",
-                            }.get(str(personal_engine), str(personal_engine))
-                        )
-                    )
-                learning = diagnostics.get("adaptive_learning")
-                if learning:
-                    st.caption(
-                        "Apprentissage progressif : "
-                        f"{int(learning.get('watchlist_signals', 0))} film(s) "
-                        "« À voir » comme signaux d’envie · "
-                        f"{int(learning.get('negative_signals', 0))} refus "
-                        "comme contre-exemples · "
-                        f"{int(learning.get('seen_exclusions', 0))} film(s) "
-                        "simplement exclus."
-                    )
-                engine = diagnostics.get("semantic_engine")
-                st.caption(
-                    "Proximité des histoires : "
-                    + (
-                        "modèle sémantique multilingue local"
-                        if engine == "semantic"
-                        else "repli lexical TF‑IDF"
-                    )
-                )
-                if (
-                    search_settings.get("semantic_enabled", semantic_enabled)
-                    and engine != "semantic"
-                ):
-                    st.warning(
-                        "Le modèle sémantique complet n’a pas pu être utilisé "
-                        "pour cette recherche : le classement repose sur le "
-                        "repli lexical, moins précis."
-                    )
-                if diagnostics.get("excluded_genre_ids"):
-                    genre_names_by_id = {
-                        genre_id: name
-                        for name, genre_id in TMDB_EXCLUDABLE_GENRES.items()
-                    }
-                    st.caption(
-                        "Genres exclus avant analyse : "
-                        + ", ".join(
-                            genre_names_by_id.get(int(genre_id), str(genre_id))
-                            for genre_id in diagnostics["excluded_genre_ids"]
-                        )
-                    )
-            diagnostic_path_value = diagnostics.get("diagnostic_path")
-            if diagnostic_path_value:
-                diagnostic_path = Path(str(diagnostic_path_value))
-                if diagnostic_path.is_file():
-                    diagnostic_payload = json.loads(
-                        diagnostic_path.read_text(encoding="utf-8")
-                    )
-                    diagnostic_download_payload = diagnostic_payload
-                    diagnostic_download_name = diagnostics.get(
-                        "diagnostic_file_name",
-                        diagnostic_path.name,
-                    )
-
         if recommendation_lists:
             tab_labels = ["Meilleurs matchs", "Découvertes pour toi"]
             if recommendation_lists.get("classics"):
@@ -697,9 +517,6 @@ def render_recommendations_tab(
                         view="safe",
                         recommendations=recommendation_lists.get("safe", []),
                         all_recommendations=recommendations,
-                        diagnostics=diagnostics,
-                        diagnostic_download_payload=diagnostic_download_payload,
-                        diagnostic_download_name=diagnostic_download_name,
                         radarr_config=radarr_config,
                     )
             if len(recommendation_tabs) == 3:
@@ -713,11 +530,6 @@ def render_recommendations_tab(
                                 "classics", []
                             ),
                             all_recommendations=recommendations,
-                            diagnostics=diagnostics,
-                            diagnostic_download_payload=(
-                                diagnostic_download_payload
-                            ),
-                            diagnostic_download_name=diagnostic_download_name,
                             radarr_config=radarr_config,
                         )
             with discovery_tab:
@@ -729,8 +541,5 @@ def render_recommendations_tab(
                             "discovery", []
                         ),
                         all_recommendations=recommendations,
-                        diagnostics=diagnostics,
-                        diagnostic_download_payload=diagnostic_download_payload,
-                        diagnostic_download_name=diagnostic_download_name,
                         radarr_config=radarr_config,
                     )
