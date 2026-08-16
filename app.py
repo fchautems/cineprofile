@@ -81,6 +81,24 @@ st.markdown(
         font-weight:750; font-size:.74rem; }
       .cp-intro { color:#66685f; max-width:780px; font-size:1.08rem;
         line-height:1.58; margin-bottom:1.4rem; }
+      [class*="st-key-watchlist_"] button[kind="primary"] {
+        background:#238636; border-color:#238636; color:white;
+      }
+      [class*="st-key-not_interested_"] button[kind="primary"] {
+        background:#cf222e; border-color:#cf222e; color:white;
+      }
+      [class*="st-key-already_seen_"] button[kind="primary"] {
+        background:#0969da; border-color:#0969da; color:white;
+      }
+      [class*="st-key-radarr_"] button[kind="primary"] {
+        background:#8250df; border-color:#8250df; color:white;
+      }
+      [class*="st-key-watchlist_"] button,
+      [class*="st-key-not_interested_"] button,
+      [class*="st-key-already_seen_"] button,
+      [class*="st-key-radarr_"] button {
+        min-height:2.6rem; border-radius:999px; font-weight:650;
+      }
     </style>
     """,
     unsafe_allow_html=True,

@@ -11,9 +11,10 @@ import streamlit as st
 
 from cineprofile import __version__
 from cineprofile.compat import CineProfileVersionMismatch, unpack_recommendation_run
-from cineprofile.diagnostics import diagnostic_with_ui_view
 from cineprofile.genre_catalog import TMDB_EXCLUDABLE_GENRES
-from cineprofile.preferences import load_feedback
+from cineprofile.preferences import load_feedback, load_radarr_requests
+from cineprofile.radarr_status import active_radarr_ids, without_active_radarr_movies
+from cineprofile.radarr_sync import synchronize_radarr_catalog
 from cineprofile.ranking import build_recommendation_lists
 from cineprofile.recommendation_state import load_saved_recommendations
 from cineprofile.recommender import recommend_movies
@@ -38,6 +39,7 @@ def _restore_saved_selection(database: str | Path, profile: dict | None) -> None
         for tmdb_id, feedback in load_feedback(database).items()
         if feedback.get("action") in {"not_interested", "already_seen"}
     }
+    excluded.update(active_radarr_ids(load_radarr_requests(database)))
     recommendations = [
         item
         for item in saved["recommendations"]
@@ -50,6 +52,39 @@ def _restore_saved_selection(database: str | Path, profile: dict | None) -> None
     st.session_state["recommendation_diagnostics"] = saved["diagnostics"]
     st.session_state["recommendation_settings"] = saved["settings"]
     st.session_state["recommendation_updated_at"] = saved["updated_at"]
+
+
+def _exclude_radarr_movies(
+    database: str | Path,
+    recommendations: list[dict],
+    radarr_config: dict | None,
+) -> list[dict]:
+    """Refresh Radarr briefly, then keep only genuine new suggestions."""
+    requests = load_radarr_requests(database)
+    if radarr_config and recommendations:
+        now = datetime.now(UTC)
+        checked_at = st.session_state.get("suggestions_radarr_checked_at")
+        stale = True
+        if checked_at:
+            try:
+                stale = now - datetime.fromisoformat(str(checked_at)) > timedelta(
+                    seconds=25
+                )
+            except ValueError:
+                stale = True
+        if stale:
+            try:
+                requests = synchronize_radarr_catalog(
+                    database,
+                    radarr_config,
+                    recommendations,
+                )
+            except Exception as exc:
+                st.session_state["suggestions_radarr_error"] = str(exc)
+            else:
+                st.session_state.pop("suggestions_radarr_error", None)
+                st.session_state["suggestions_radarr_checked_at"] = now.isoformat()
+    return without_active_radarr_movies(recommendations, requests)
 
 
 def _render_recommendation_list(
@@ -78,58 +113,15 @@ def _render_recommendation_list(
         )
         return
 
-    if is_classic:
-        st.caption(
-            "Cette liste contient uniquement des films antérieurs à la "
-            "période choisie. Elle possède son propre budget d’analyse et "
-            "ne retire aucune place aux suggestions récentes."
-        )
-    elif is_safe:
-        st.caption(
-            "La qualité publique reste dominante, avec un garde-fou personnel "
-            "pour écarter du haut de la liste les films qui ne te donnent "
-            "manifestement pas envie."
-        )
-    else:
-        tier_counts = {
-            tier: sum(item.get("match_tier") == tier for item in recommendations)
-            for tier in (
-                "Correspondance solide",
-                "Piste plausible",
-                "Solution de repli",
-            )
-        }
-        if tier_counts["Correspondance solide"]:
-            st.success(
-                f"{tier_counts['Correspondance solide']} correspondance(s) "
-                "solide(s) détectée(s)."
-            )
-        else:
-            st.warning(
-                "Aucune correspondance solide dans ce vivier. Les premiers "
-                "résultats sont des pistes personnalisées."
-            )
-        st.caption(
-            f"{tier_counts['Piste plausible']} piste(s) plausible(s) · "
-            f"{tier_counts['Solution de repli']} solution(s) de repli. "
-            "Les dix premières valeurs sûres sont volontairement absentes."
-        )
-        learning = (diagnostics or {}).get("adaptive_learning", {})
-        st.caption(
-            "Apprentissage actif : les nouvelles notes IMDb réactualisent le "
-            "profil, « À voir » affine l’envie et « Pas intéressé » devient "
-            "un contre-exemple. Ces retours s’appliquent à la prochaine "
-            "recherche."
-            + (
-                " "
-                f"Signaux actuels : {int(learning.get('watchlist_signals', 0))} "
-                f"à voir · {int(learning.get('negative_signals', 0))} refus."
-                if learning
-                else ""
-            )
-        )
+    st.caption(
+        {
+            "classics": "Des films plus anciens, avec un budget séparé.",
+            "safe": "Le meilleur équilibre entre qualité publique et envie personnelle.",
+            "discovery": "Des pistes plus personnelles et moins évidentes.",
+        }[view]
+    )
 
-    st.markdown("#### Filtrer et trier")
+    st.caption("Affiner les résultats")
     available_genres = sorted(
         {
             genre
@@ -153,79 +145,14 @@ def _render_recommendation_list(
         }
     )
 
-    minimum_public_rating = 0.0
-    minimum_score = 0
-    minimum_interest = 0
-    if is_safe:
-        filter_columns = st.columns(4)
-        minimum_public_rating = filter_columns[0].slider(
-            "Note publique corrigée minimale",
-            0.0,
-            10.0,
-            0.0,
-            0.1,
-            key=f"{key_prefix}_minimum_public",
-        )
-        genre_column = filter_columns[1]
-        platform_column = filter_columns[2]
-        availability_column = filter_columns[3]
-    else:
-        filter_columns = st.columns(5)
-        learned_results = any(
-            item.get("personal_model_used") for item in recommendations
-        )
-        minimum_score = filter_columns[0].slider(
-            (
-                "Chance d’un 8+ minimale"
-                if learned_results
-                else "Affinité minimale"
-            ),
-            0,
-            100,
-            0,
-            key=f"{key_prefix}_minimum_affinity",
-        )
-        minimum_interest = filter_columns[1].slider(
-            "Envie minimale",
-            0,
-            100,
-            0,
-            key=f"{key_prefix}_minimum_interest",
-            help="Indice d’attrait avant visionnage, distinct de la note.",
-        )
-        genre_column = filter_columns[2]
-        platform_column = filter_columns[3]
-        availability_column = filter_columns[4]
-
-    wanted_genres = genre_column.multiselect(
+    filter_columns = st.columns(4, vertical_alignment="bottom")
+    wanted_genres = filter_columns[0].multiselect(
         "Genres",
         available_genres,
         key=f"{key_prefix}_genres",
     )
-    wanted_platforms = platform_column.multiselect(
-        "Plateformes CH",
-        available_platforms,
-        key=f"{key_prefix}_platforms",
-    )
-    availability = availability_column.selectbox(
-        "Disponibilité",
-        [
-            "Toutes",
-            "Incluse/Gratuite",
-            "Location/Achat",
-            "Disponible en CH",
-        ],
-        key=f"{key_prefix}_availability",
-    )
-
-    secondary_filters = st.columns(3)
-    wanted_languages = secondary_filters[0].multiselect(
-        "Langues originales",
-        available_languages,
-        key=f"{key_prefix}_languages",
-    )
-    runtime_range = secondary_filters[1].slider(
-        "Durée souhaitée",
+    runtime_range = filter_columns[1].slider(
+        "Durée",
         30,
         300,
         (30, 300),
@@ -236,9 +163,26 @@ def _render_recommendation_list(
             "la plage complète 30–300 minutes est conservée."
         ),
     )
+    wanted_languages = filter_columns[2].multiselect(
+        "Langue",
+        available_languages,
+        key=f"{key_prefix}_languages",
+    )
+    minimum_public_rating = filter_columns[3].slider(
+        "Note minimale",
+        0.0,
+        10.0,
+        0.0,
+        0.1,
+        key=f"{key_prefix}_minimum_public",
+        help="Note publique corrigée minimale.",
+    )
+    minimum_score = 0
+    minimum_interest = 0
     learned_results = any(
         item.get("personal_model_used") for item in recommendations
     )
+
     if is_safe:
         sort_options = [
             "Ordre conseillé",
@@ -266,17 +210,33 @@ def _render_recommendation_list(
             "Durée",
             "Titre",
         ]
-    sort_choice = secondary_filters[2].selectbox(
-        "Trier par",
-        sort_options,
-        index=0,
-        key=f"{key_prefix}_sort",
-    )
-    descending = st.toggle(
-        "Ordre décroissant",
-        value=True,
-        key=f"{key_prefix}_descending",
-    )
+    with st.popover("Filtres avancés", icon=":material/tune:"):
+        wanted_platforms = st.multiselect(
+            "Plateformes CH",
+            available_platforms,
+            key=f"{key_prefix}_platforms",
+        )
+        availability = st.selectbox(
+            "Disponibilité",
+            [
+                "Toutes",
+                "Incluse/Gratuite",
+                "Location/Achat",
+                "Disponible en CH",
+            ],
+            key=f"{key_prefix}_availability",
+        )
+        sort_choice = st.selectbox(
+            "Trier par",
+            sort_options,
+            index=0,
+            key=f"{key_prefix}_sort",
+        )
+        descending = st.toggle(
+            "Ordre décroissant",
+            value=True,
+            key=f"{key_prefix}_descending",
+        )
 
     visible = filter_recommendations(
         recommendations,
@@ -340,58 +300,6 @@ def _render_recommendation_list(
         f"{min(visible_count, len(visible))} affichée(s)"
     )
 
-    if (
-        diagnostics
-        and diagnostic_download_payload is not None
-        and diagnostic_download_name is not None
-    ):
-        ui_view = {
-            "recommendation_view": view,
-            "minimum_score": minimum_score,
-            "minimum_interest": minimum_interest,
-            "minimum_public_rating": minimum_public_rating,
-            "genres": wanted_genres,
-            "platforms": wanted_platforms,
-            "availability": availability,
-            "languages": wanted_languages,
-            "runtime_range": list(runtime_range),
-            "sort": sort_choice,
-            "descending": descending,
-            "visible_tmdb_ids": [
-                int(item["tmdb_id"]) for item in visible
-            ],
-            "displayed_tmdb_ids": [
-                int(item["tmdb_id"]) for item in visible[:visible_count]
-            ],
-        }
-        view_payload = diagnostic_with_ui_view(
-            diagnostic_download_payload,
-            ui_view,
-            view_recommendations=recommendations,
-        )
-        warning_checks = [
-            row
-            for row in view_payload.get("automated_checks", [])
-            if row.get("status") == "warning"
-        ]
-        if warning_checks:
-            st.warning(
-                f"{len(warning_checks)} contrôle(s) automatique(s) "
-                "concernent les résultats actuellement affichés."
-            )
-        st.download_button(
-            "Tester le moteur et télécharger le diagnostic",
-            data=json.dumps(
-                view_payload,
-                ensure_ascii=False,
-                indent=2,
-            ).encode("utf-8"),
-            file_name=diagnostic_download_name,
-            mime="application/json",
-            key=f"download_diagnostic_{view}_{diagnostics.get('search_id')}",
-            width="stretch",
-        )
-
     render_recommendation_cards(
         database,
         all_recommendations,
@@ -421,54 +329,8 @@ def render_recommendations_tab(
     logger: logging.Logger,
     radarr_config: dict | None = None,
 ) -> None:
-    st.subheader("Suggestions")
-    st.write(
-        "Une seule recherche produit deux listes récentes complémentaires : "
-        "les valeurs sûres privilégient les films publics solides qui restent "
-        "compatibles avec toi, tandis que les découvertes explorent plus "
-        "librement ton profil et la proximité des histoires. Les films plus "
-        "anciens restent dans une troisième liste séparée."
-    )
-    with st.expander("Comprendre les trois listes", expanded=False):
-        st.markdown(
-            """
-            **Valeurs sûres** garde la note publique corrigée comme signal
-            principal, puis vérifie que le film atteint un minimum d’envie et
-            de compatibilité avec toi. Un film unanimement apprécié ne doit
-            donc plus arriver en tête s’il est manifestement hors de tes goûts.
-
-            **Découvertes pour toi** part du même vivier, mais utilise ton
-            historique, la proximité des histoires et l’indice d’envie. Les
-            dix premières valeurs sûres en sont retirées afin que les deux
-            listes jouent réellement des rôles différents.
-
-            L’**indice d’envie** estime ton attrait avant visionnage. Il valorise
-            les signatures et acteurs qui constituent une vraie accroche, les
-            suites d’un épisode aimé et des traitements précis comme la comédie
-            noire. Il peut aussi signaler des freins : biopic, histoire, sport,
-            animation, équipe inconnue ou usure d’une franchise. Ce n’est pas
-            une probabilité et ses réglages sont visibles dans **Préférences**.
-
-            La **chance d’un 8+** estime séparément la probabilité que tu
-            attribues au moins **8/10** après visionnage. Elle est calculée
-            principalement à partir des films aux histoires les plus proches
-            dans ton historique, en donnant autant de valeur aux contre-exemples
-            qu’aux films aimés. Ta fréquence personnelle de 8+ sert de référence :
-            30 % peut donc être une bonne chance si ta moyenne habituelle est 20 %.
-
-            Un modèle global complète ce voisinage avec les thèmes, genres,
-            réalisateurs, scénaristes et acteurs. Il apprend directement tes
-            notes autour de ta propre moyenne : la note publique ne constitue
-            plus le point de départ de la prédiction.
-
-            TMDB intervient seulement pour écarter les fiches trop fragiles et,
-            dans les découvertes, comme petit garde-fou de qualité.
-
-            **Classiques à découvrir** reprend les films antérieurs à la
-            période choisie dans une réserve et un budget indépendants. Un
-            classique ne peut donc plus prendre la place d’une sortie récente.
-            """
-        )
+    st.subheader("Suggestions", anchor=False)
+    st.caption("Des films choisis pour toi, avec un score clair et un état à jour.")
     _restore_saved_selection(database, profile)
     if not profile:
         st.info("Calcule d’abord le profil.")
@@ -484,7 +346,8 @@ def render_recommendations_tab(
                 "Dernière sélection conservée · "
                 + str(updated_at).replace("T", " ")[:19]
             )
-        setting_columns = st.columns(2)
+        search_label = "Actualiser" if existing_selection else "Créer"
+        setting_columns = st.columns([2.2, 2.0, 1.0], vertical_alignment="bottom")
         period_choice = setting_columns[0].selectbox(
             "Période",
             [
@@ -496,70 +359,48 @@ def render_recommendations_tab(
                 "Toutes les années",
                 "Période personnalisée",
             ],
+            key="suggestion_period",
+            persist_state="session",
         )
         depth = setting_columns[1].selectbox(
             "Profondeur de recherche",
             ["Rapide", "Normale", "Approfondie"],
             index=1,
+            key="suggestion_depth",
+            persist_state="session",
             help=(
                 "Combine plusieurs sources. Une recherche approfondie est plus "
                 "longue la première fois puis bénéficie du cache local."
             ),
         )
+        refresh_clicked = setting_columns[2].button(
+            search_label,
+            icon=":material/refresh:",
+            type="primary",
+            width="stretch",
+            help="Recalculer les trois listes de suggestions.",
+        )
 
         today = date.today()
-        with st.expander("Réglages avancés", expanded=False):
-            advanced_columns = st.columns(3)
-            reliability = advanced_columns[0].selectbox(
-                "Fiabilité des avis TMDB",
-                ["Souple", "Équilibrée", "Forte"],
-                index=2,
-                help=(
-                    "Le minimum de votes s’adapte automatiquement à l’âge du "
-                    "film. Les films récents sont moins pénalisés."
-                ),
-            )
-            include_upcoming = advanced_columns[1].checkbox(
-                "Inclure les films à venir",
-                value=False,
-            )
-            semantic_enabled = advanced_columns[2].checkbox(
-                "Analyse sémantique locale",
-                value=True,
-                help=(
-                    "Compare localement les résumés aux films notés. En cas "
-                    "d’indisponibilité, CineProfile utilise un repli lexical."
-                ),
-            )
-            excluded_genre_names = st.multiselect(
-                "Genres exclus de la recherche",
-                list(TMDB_EXCLUDABLE_GENRES),
-                default=["Horreur"],
-                help=(
-                    "Ces genres sont retirés avant même l’analyse détaillée. "
-                    "L’horreur est exclue par défaut ; tu peux ajouter ou "
-                    "retirer librement les autres genres."
-                ),
-            )
-            excluded_genre_ids = {
-                TMDB_EXCLUDABLE_GENRES[name]
-                for name in excluded_genre_names
-            }
-            include_back_catalogue = st.checkbox(
-                "Préparer aussi « Classiques à découvrir »",
-                value=True,
-                help=(
-                    "Construit une liste séparée de films antérieurs à la "
-                    "période choisie. Elle ne consomme aucune place du budget "
-                    "des suggestions récentes."
-                ),
-            )
-            custom_budget = st.checkbox("Personnaliser le budget d’analyse")
-            analysis_limit = (
-                st.slider("Nombre maximal de fiches complètes", 50, 700, 300, 25)
-                if custom_budget
-                else None
-            )
+        reliability = str(st.session_state.get("search_reliability", "Forte"))
+        include_upcoming = bool(
+            st.session_state.get("search_include_upcoming", False)
+        )
+        semantic_enabled = bool(
+            st.session_state.get("search_semantic_enabled", True)
+        )
+        excluded_genre_names = st.session_state.get(
+            "search_excluded_genres", ["Horreur"]
+        )
+        excluded_genre_ids = {
+            TMDB_EXCLUDABLE_GENRES[name]
+            for name in excluded_genre_names
+            if name in TMDB_EXCLUDABLE_GENRES
+        }
+        include_back_catalogue = bool(
+            st.session_state.get("search_include_classics", True)
+        )
+        analysis_limit = st.session_state.get("search_analysis_limit")
 
         custom_years: tuple[int, int] | None = None
         if period_choice == "Période personnalisée":
@@ -600,12 +441,7 @@ def render_recommendations_tab(
                 else today.isoformat()
             )
 
-        search_label = (
-            "Actualiser les suggestions"
-            if existing_selection
-            else "Créer mes suggestions"
-        )
-        if st.button(search_label, width="stretch"):
+        if refresh_clicked:
             try:
                 with st.spinner(
                     "Construction du vivier, analyse des crédits et des histoires…"
@@ -661,14 +497,34 @@ def render_recommendations_tab(
                 st.session_state["visible_results_count_classics"] = 20
 
         recommendations = st.session_state.get("recommendations", [])
-        recommendation_lists = st.session_state.get("recommendation_lists")
-        if recommendations and not recommendation_lists:
-            recommendation_lists = build_recommendation_lists(recommendations)
+        visible_recommendations = _exclude_radarr_movies(
+            database,
+            recommendations,
+            radarr_config,
+        )
+        if len(visible_recommendations) != len(recommendations):
+            st.session_state["recommendations"] = visible_recommendations
+            recommendations = visible_recommendations
+            recommendation_lists = (
+                build_recommendation_lists(recommendations)
+                if recommendations
+                else None
+            )
             st.session_state["recommendation_lists"] = recommendation_lists
+        else:
+            recommendation_lists = st.session_state.get("recommendation_lists")
+            if recommendations and not recommendation_lists:
+                recommendation_lists = build_recommendation_lists(recommendations)
+                st.session_state["recommendation_lists"] = recommendation_lists
+        if st.session_state.get("suggestions_radarr_error"):
+            st.caption(
+                "Radarr est momentanément injoignable ; les derniers états "
+                "connus restent appliqués."
+            )
         diagnostics = st.session_state.get("recommendation_diagnostics")
         diagnostic_download_payload = None
         diagnostic_download_name = None
-        if diagnostics:
+        if False and diagnostics:  # Les diagnostics sont rendus dans Réglages.
             search_settings = diagnostics.get("settings", {})
             with st.expander("Diagnostic de cette recherche", expanded=False):
                 st.write(
@@ -825,9 +681,9 @@ def render_recommendations_tab(
                     )
 
         if recommendation_lists:
-            tab_labels = ["✅ Valeurs sûres", "✨ Découvertes pour toi"]
+            tab_labels = ["Meilleurs matchs", "Découvertes pour toi"]
             if recommendation_lists.get("classics"):
-                tab_labels.append("🎞 Classiques à découvrir")
+                tab_labels.append("Classiques à découvrir")
             recommendation_tabs = st.tabs(
                 tab_labels,
                 key="recommendation_view",

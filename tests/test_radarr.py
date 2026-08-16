@@ -236,7 +236,7 @@ def test_radarr_exposes_real_movie_states() -> None:
     ) as client:
         states = client.movie_states({101, 102, 103, 104, 105, 106})
 
-    assert states[101]["state"] == "available"
+    assert states[101]["state"] == "downloaded"
     assert states[101]["progress"] == 100.0
     assert states[102]["state"] == "downloading"
     assert states[102]["progress"] == 75.0
@@ -259,7 +259,7 @@ def test_radarr_request_status_is_persistent_and_separate(tmp_path: Path) -> Non
     status = load_radarr_requests(database)[123]
 
     assert status["status"] == "downloaded"
-    assert status["radarr_state"] == "sent"
+    assert status["radarr_state"] == "monitored"
     assert status["radarr_movie_id"] == 77
     assert status["payload"]["title"] == "Film test"
     assert load_radarr_attempts(database, tmdb_id=123)[0]["outcome"] == "accepted"

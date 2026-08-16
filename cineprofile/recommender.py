@@ -953,6 +953,10 @@ def score_candidates(
                 "overview": candidate.get("overview"),
                 "vote_average": candidate.get("vote_average"),
                 "vote_count": candidate.get("vote_count"),
+                "imdb_rating": candidate.get("imdb_rating"),
+                "imdb_vote_count": candidate.get(
+                    "imdb_vote_count", candidate.get("num_votes")
+                ),
                 "bayesian_rating": round(bayesian_rating, 2),
                 "genres": [
                     item["name"] for item in candidate.get("genres", [])

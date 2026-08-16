@@ -5,6 +5,7 @@ from pathlib import Path
 
 from cineprofile.preferences import (
     load_radarr_requests,
+    upsert_radarr_catalog_entries,
     update_radarr_states,
 )
 from cineprofile.radarr import RadarrClient
@@ -71,4 +72,30 @@ def synchronize_radarr_states(
     ) as client:
         states = client.movie_states(set(requests))
     update_radarr_states(states, database)
+    return load_radarr_requests(database)
+
+
+def synchronize_radarr_catalog(
+    database: str | Path,
+    radarr_config: dict,
+    recommendations: list[dict],
+) -> dict[int, dict]:
+    """Discover recommendation films already managed anywhere in Radarr."""
+    if not recommendations:
+        return load_radarr_requests(database)
+    recommendation_ids = {
+        int(item["tmdb_id"]) for item in recommendations if item.get("tmdb_id")
+    }
+    with RadarrClient(
+        radarr_config["url"],
+        radarr_config["api_key"],
+        timeout=10.0,
+    ) as client:
+        catalog_states = client.all_movie_states()
+    matching_states = {
+        tmdb_id: state
+        for tmdb_id, state in catalog_states.items()
+        if tmdb_id in recommendation_ids
+    }
+    upsert_radarr_catalog_entries(recommendations, matching_states, database)
     return load_radarr_requests(database)

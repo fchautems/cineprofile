@@ -1,8 +1,9 @@
 # CineProfile
 
-Version actuelle : **0.16.1**. L’écran permanent **Ma liste** rassemble les
-films marqués à voir, écartés, vus et envoyés à Radarr. Les décisions se font
-directement sur les cartes, sont réversibles, et restent visibles dans la liste.
+Version actuelle : **0.17.0**. Suggestions affiche immédiatement les trois
+listes, des scores CineProfile et IMDb distincts, des actions lisibles et les
+états Radarr sous forme de badges colorés. Les films déjà pris en charge par
+Radarr quittent Suggestions et restent accessibles dans **Ma liste**.
 
 CineProfile transforme un export `ratings.csv` d’IMDb en trois éléments
 réutilisables :
@@ -16,6 +17,20 @@ réutilisables :
 
 Le CSV n’est donc pas le modèle : c’est l’historique initial. La base enrichie
 devient la mémoire durable de l’outil.
+
+## Mise à jour 0.17.0 — Suggestions et statuts plus lisibles
+
+L’écran Suggestions est recentré sur les films : période, profondeur et
+actualisation tiennent sur une barre compacte ; les filtres techniques et les
+diagnostics sont rangés dans Réglages. Les catégories deviennent **Meilleurs
+matchs**, **Découvertes pour toi** et **Classiques à découvrir**.
+
+Chaque carte distingue l’envie estimée par CineProfile de la note IMDb, garde
+un lien IMDb explicite et présente des boutons complets, colorés et réversibles.
+Les états Radarr sont traduits en badges surveillé, téléchargement en cours,
+disponible, téléchargé, erreur ou non envoyé. La synchronisation reconnaît
+aussi les films ajoutés directement dans Radarr et les retire des nouvelles
+suggestions sans perdre leur fiche dans Ma liste.
 
 ## Correctif 0.16.1 — conserver l’ordre qui gagne l’audit
 

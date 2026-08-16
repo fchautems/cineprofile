@@ -278,7 +278,7 @@ def test_streamlit_app_starts(tmp_path: Path, monkeypatch) -> None:
     assert any(button.label == "Enregistrer" for button in app.button)
 
 
-def test_streamlit_exposes_all_tabs_and_excludable_genres(
+def test_streamlit_exposes_all_tabs_without_advanced_search_settings(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -301,14 +301,9 @@ def test_streamlit_exposes_all_tabs_and_excludable_genres(
         "Mon profil",
         "Réglages",
     ]
-    excluded = next(
-        widget
+    assert not any(
+        widget.label == "Genres exclus de la recherche"
         for widget in app.multiselect
-        if widget.label == "Genres exclus de la recherche"
-    )
-    assert excluded.value == ["Horreur"]
-    assert {"Horreur", "Science-Fiction", "Drame", "Documentaire"} <= set(
-        excluded.options
     )
 
 
@@ -350,7 +345,7 @@ def test_streamlit_renders_only_my_list_when_selected(
     next(
         button
         for button in app.button
-        if button.label == ":material/thumb_down:"
+        if button.label == "Pas intéressé"
     ).click()
     app.run(timeout=15)
     assert load_feedback(database)[991]["action"] == "not_interested"
@@ -358,7 +353,7 @@ def test_streamlit_renders_only_my_list_when_selected(
     next(
         button
         for button in app.button
-        if button.label == ":material/thumb_up:"
+        if button.label == "À voir"
     ).click()
     app.run(timeout=15)
     assert load_feedback(database)[991]["action"] == "watchlist"
@@ -660,6 +655,8 @@ def test_recommendation_card_renders_with_explanation(
             "bayesian_rating": 7.2,
             "vote_average": 7.4,
             "vote_count": 1200,
+            "imdb_rating": 7.8,
+            "imdb_vote_count": 12_345,
             "components": {
                 "genres": 0.60,
                 "keywords": 0.55,
@@ -677,14 +674,19 @@ def test_recommendation_card_renders_with_explanation(
 
     assert not app.exception
     assert any(
-        metric.label == "Note publique corrigée"
-        and metric.value == "7.2/10"
+        metric.label == "Envie estimée"
+        and metric.value == "6.1/10"
+        for metric in app.metric
+    )
+    assert any(
+        metric.label == "Note IMDb"
+        and metric.value == "7.8/10"
         for metric in app.metric
     )
     next(
         button
         for button in app.button
-        if button.label == ":material/thumb_down:"
+        if button.label == "Pas intéressé"
     ).click()
     app.run(timeout=15)
     assert load_feedback(database)[1]["action"] == "not_interested"
@@ -2624,13 +2626,13 @@ def test_recommendations_use_calibrated_personal_prediction(
             }
         ],
     }
-    app.session_state["recommendation_view"] = "✨ Découvertes pour toi"
+    app.session_state["recommendation_view"] = "Découvertes pour toi"
     app.run(timeout=20)
 
     assert not app.exception
     assert any(
-        metric.label == "Envie probable"
-        and metric.value == result["interest_label"]
+        metric.label == "Envie estimée"
+        and metric.value == f"{float(result['interest_score']) / 10:.1f}/10"
         for metric in app.metric
     )
 

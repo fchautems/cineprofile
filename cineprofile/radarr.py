@@ -136,7 +136,7 @@ class RadarrClient:
             if size:
                 details.append(f"{size / (1024 ** 3):.1f} Go")
             return {
-                "state": "available",
+                "state": "downloaded",
                 "detail": " · ".join(details) or "Fichier importé par Radarr.",
                 "progress": 100.0,
                 "radarr_movie_id": movie_id,
@@ -191,6 +191,15 @@ class RadarrClient:
                 "progress": None,
                 "radarr_movie_id": movie_id,
             }
+        if movie.get("isAvailable") is True or str(
+            movie.get("status") or ""
+        ).casefold() == "released":
+            return {
+                "state": "available",
+                "detail": "Le film est sorti et surveillé par Radarr.",
+                "progress": None,
+                "radarr_movie_id": movie_id,
+            }
         return {
             "state": "monitored",
             "detail": "Radarr surveille ce film.",
@@ -225,6 +234,26 @@ class RadarrClient:
             )
             for tmdb_id in wanted
         }
+
+    def all_movie_states(self) -> dict[int, dict]:
+        """Return the current state of every movie carrying a TMDB id."""
+        movies = self.movies()
+        queue = self.queue()
+        queue_by_movie_id = {
+            int(row["movieId"]): row
+            for row in queue
+            if row.get("movieId")
+        }
+        states: dict[int, dict] = {}
+        for movie in movies:
+            if not movie.get("tmdbId"):
+                continue
+            movie_id = int(movie["id"]) if movie.get("id") else -1
+            states[int(movie["tmdbId"])] = self._derive_movie_state(
+                movie,
+                queue_by_movie_id.get(movie_id),
+            )
+        return states
 
     def _existing_movie(self, tmdb_id: int) -> dict | None:
         result = self.movies()

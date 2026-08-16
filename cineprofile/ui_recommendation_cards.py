@@ -15,6 +15,7 @@ from cineprofile.preferences import (
     save_feedback,
 )
 from cineprofile.radarr import RadarrClient
+from cineprofile.radarr_status import radarr_status_meta
 
 
 FEEDBACK_ACTIONS = {
@@ -25,8 +26,8 @@ FEEDBACK_ACTIONS = {
     },
     "not_interested": {
         "icon": ":material/thumb_down:",
-        "label": "Pas pour moi",
-        "help": "Pas pour moi. Cliquer à nouveau pour retirer cet état.",
+        "label": "Pas intéressé",
+        "help": "Pas intéressé. Cliquer à nouveau pour retirer cet état.",
     },
     "already_seen": {
         "icon": ":material/visibility:",
@@ -34,18 +35,6 @@ FEEDBACK_ACTIONS = {
         "help": "Déjà vu. Cliquer à nouveau pour retirer cet état.",
     },
 }
-
-RADARR_STATES = {
-    "sent": (":material/send:", "Envoyé à Radarr"),
-    "monitored": (":material/radar:", "Monitoré"),
-    "no_result": (":material/search_off:", "Aucun téléchargement"),
-    "downloading": (":material/downloading:", "Téléchargement"),
-    "available": (":material/task_alt:", "Disponible"),
-    "error": (":material/error:", "Erreur Radarr"),
-    "missing": (":material/link_off:", "Absent de Radarr"),
-    "unmonitored": (":material/notifications_off:", "Non monitoré"),
-}
-
 
 def _remove_from_recommendation_state(tmdb_id: int) -> None:
     st.session_state["recommendations"] = [
@@ -120,18 +109,19 @@ def _send_to_radarr(
             if result.already_present
             else "Film envoyé à Radarr."
         )
+        _remove_from_recommendation_state(tmdb_id)
         st.session_state["force_radarr_sync"] = True
 
 
 def _render_radarr_state(host, request: dict) -> None:
     state = str(request.get("radarr_state") or "sent")
-    icon, label = RADARR_STATES.get(state, RADARR_STATES["sent"])
+    color, icon, label = radarr_status_meta(state)
     progress = request.get("progress")
     if state == "downloading" and progress is not None:
         label += f" · {float(progress):.0f}%"
-    host.markdown(f"{icon} **{label}**")
+    host.badge(label, icon=icon, color=color)
     if request.get("status_detail"):
-        host.caption(str(request["status_detail"]))
+        host.caption(f"Radarr · {request['status_detail']}")
 
 
 def render_recommendation_cards(
@@ -149,7 +139,7 @@ def render_recommendation_cards(
     radarr_requests = load_radarr_requests(database)
     for item in visible[:visible_count]:
         with st.container(border=True):
-            poster_col, title_col, score_col = st.columns([1.05, 4.5, 1.25])
+            poster_col, title_col, score_col = st.columns([1.0, 4.2, 1.8])
             imdb_url = (
                 f"https://www.imdb.com/title/{item['imdb_id']}/"
                 if item.get("imdb_id")
@@ -168,13 +158,12 @@ def render_recommendation_cards(
                     f'alt="Ouvrir la fiche {external_site}"></a>',
                     unsafe_allow_html=True,
                 )
-                poster_col.caption(f"Cliquer pour ouvrir {external_site}")
             else:
                 poster_col.caption("Affiche indisponible")
 
-            title_col.markdown(
-                f"### {item['title']} "
-                f"({(item.get('release_date') or '—')[:4]})"
+            title_col.subheader(
+                f"{item['title']} ({(item.get('release_date') or '—')[:4]})",
+                anchor=False,
             )
             if item.get("match_tier"):
                 title_col.caption("Niveau : " + str(item["match_tier"]))
@@ -192,13 +181,6 @@ def render_recommendation_cards(
                 (
                     f"{item['runtime_minutes']} min"
                     if item.get("runtime_minutes")
-                    else ""
-                ),
-                (
-                    f"TMDB {float(item['vote_average']):.1f}/10 "
-                    f"sur {int(item.get('vote_count') or 0):,} votes"
-                    .replace(",", "’")
-                    if item.get("vote_average")
                     else ""
                 ),
             ]
@@ -237,9 +219,10 @@ def render_recommendation_cards(
                         continue
                     title_col.caption("• " + reason)
             title_col.link_button(
-                f"Voir sur {external_site}",
+                f"{external_site} ↗",
                 imdb_url,
                 key=f"external_{view}_{item['tmdb_id']}",
+                icon=":material/open_in_new:",
             )
 
             existing_feedback = feedback.get(int(item["tmdb_id"]))
@@ -253,88 +236,59 @@ def render_recommendation_cards(
                     )
                 else:
                     score_col.caption("Aucun état")
-            elif is_safe:
-                public_rating = float(
-                    item.get(
-                        "bayesian_rating",
-                        item.get("public_rating_adjusted") or 0.0,
-                    )
-                )
-                score_col.metric(
-                    "Note publique corrigée",
-                    f"{public_rating:.1f}/10",
-                )
-                score_col.caption(
-                    "Fiabilité "
-                    f"{float(item.get('public_rating_reliability') or 0):.0f}%"
-                )
-                score_col.caption(
-                    f"{int(item.get('vote_count') or 0):,} votes".replace(
-                        ",", "’"
-                    )
-                )
-                if item.get("safe_eligibility_label"):
-                    score_col.caption(
-                        str(item["safe_eligibility_label"])
-                    )
-            elif item.get("interest_score") is not None:
-                score_col.metric(
-                    "Envie probable",
-                    str(item.get("interest_label") or "—"),
-                )
-                score_col.caption(
-                    f"Indice d’envie {float(item['interest_score']):.0f}/100"
-                )
-            elif item.get("personal_model_used"):
-                score_col.metric(
-                    "Chance d’un 8+",
-                    f"{item['like_probability']:.0f} %",
-                )
             else:
+                interest_score = item.get("interest_score")
+                if interest_score is None:
+                    interest_score = item.get("affinity_index")
                 score_col.metric(
-                    "Affinité personnelle",
-                    f"{item['affinity_index']:.0f}/100",
+                    "Envie estimée",
+                    (
+                        f"{float(interest_score) / 10:.1f}/10"
+                        if interest_score is not None
+                        else "—"
+                    ),
+                    help="Calcul personnel CineProfile avant visionnage.",
                 )
-            if item.get("personal_model_used") and not is_safe and not is_my_list:
-                base_rate = float(
-                    item.get("base_like_rate_percent")
-                    or 100.0 * float(item.get("base_like_rate") or 0.0)
+                imdb_rating = item.get("imdb_rating")
+                imdb_votes = item.get("imdb_vote_count", item.get("num_votes"))
+                score_col.metric(
+                    "Note IMDb",
+                    f"{float(imdb_rating):.1f}/10" if imdb_rating else "—",
+                    help="Note publique IMDb, distincte du calcul CineProfile.",
                 )
-                probability = float(item["like_probability"])
-                lift_points = float(
-                    item.get("like_probability_lift_points")
-                    or probability - base_rate
-                )
-                score_col.caption(
-                    f"Chance d’un 8+ : {probability:.0f}% "
-                    f"(habitude : {base_rate:.0f}%)"
-                )
-                score_col.caption(
-                    f"Gain estimé : {lift_points:+.0f} points"
-                )
-                score_col.caption(
-                    f"Note prévue {item['predicted_rating']:.1f}/10 "
-                    f"· fourchette {item['prediction_low']:.1f}–"
-                    f"{item['prediction_high']:.1f}"
-                )
+                if imdb_votes:
+                    score_col.caption(
+                        f"{int(imdb_votes):,} votes IMDb".replace(",", "’")
+                    )
+                elif item.get("vote_average"):
+                    score_col.caption(
+                        "IMDb indisponible · "
+                        f"TMDB {float(item['vote_average']):.1f}/10 sur "
+                        f"{int(item.get('vote_count') or 0):,} votes".replace(
+                            ",", "’"
+                        )
+                    )
+                if item.get("confidence_label"):
+                    score_col.caption(
+                        f"Confiance : {item['confidence_label']} "
+                        f"({float(item.get('confidence') or 0):.0f}/100)"
+                    )
             if not is_my_list:
+                rank_label = {
+                    "safe": "Meilleurs matchs",
+                    "classics": "Classiques à découvrir",
+                    "discovery": "Découvertes pour toi",
+                }.get(view, "Meilleurs matchs")
                 score_col.caption(
-                    f"Rang « {item.get('ranking_mode', 'Valeurs sûres')} » : "
+                    f"Rang « {rank_label} » : "
                     f"{int(item.get('recommended_rank') or 0)}"
                 )
-            if not is_safe and not is_my_list:
-                score_col.caption(
-                    f"Confiance {item['confidence_label']} "
-                    f"({item['confidence']:.0f}/100)"
-                )
-            if existing_feedback and not is_my_list:
-                score_col.info(
-                    FEEDBACK_ACTIONS[str(existing_feedback["action"])]["label"]
-                )
-
             radarr_request = radarr_requests.get(int(item["tmdb_id"]))
             if radarr_request:
                 _render_radarr_state(score_col, radarr_request)
+            else:
+                color, icon, label = radarr_status_meta("missing")
+                score_col.badge(label, icon=icon, color=color)
 
             radarr_error = st.session_state.pop(
                 f"radarr_error_{int(item['tmdb_id'])}", None
@@ -347,23 +301,20 @@ def render_recommendation_cards(
             if radarr_notice:
                 st.success(str(radarr_notice))
 
-            action_columns = st.columns(4)
             existing_action = (
                 str(existing_feedback["action"])
                 if existing_feedback
                 else None
             )
-            for column, action in zip(
-                action_columns[:3],
-                ("watchlist", "not_interested", "already_seen"),
-                strict=True,
-            ):
+            action_row = st.container(horizontal=True, gap="xsmall")
+            for action in ("watchlist", "not_interested", "already_seen"):
                 action_meta = FEEDBACK_ACTIONS[action]
-                column.button(
-                    action_meta["icon"],
+                active = existing_action == action
+                action_row.button(
+                    "Annuler" if active else action_meta["label"],
+                    icon=":material/undo:" if active else action_meta["icon"],
                     key=f"{action}_{view}_{item['tmdb_id']}",
-                    type="primary" if existing_action == action else "secondary",
-                    width="stretch",
+                    type="primary" if active else "secondary",
                     help=action_meta["help"],
                     on_click=_toggle_feedback,
                     args=(item, action, database, is_my_list),
@@ -379,20 +330,22 @@ def render_recommendation_cards(
                 "missing",
                 "unmonitored",
             }
-            radarr_icon = (
-                ":material/replay:"
-                if retryable
-                else (
-                    RADARR_STATES.get(radarr_state, RADARR_STATES["sent"])[0]
-                    if radarr_request
-                    else ":material/send:"
-                )
+            _status_color, status_icon, status_label = radarr_status_meta(
+                radarr_state
             )
-            action_columns[3].button(
-                radarr_icon,
+            action_row.button(
+                (
+                    "Relancer"
+                    if retryable
+                    else (status_label if radarr_request else "Télécharger")
+                ),
+                icon=(
+                    ":material/replay:"
+                    if retryable
+                    else (status_icon if radarr_request else ":material/download:")
+                ),
                 key=f"radarr_{view}_{item['tmdb_id']}",
                 type="primary" if radarr_request else "secondary",
-                width="stretch",
                 disabled=(
                     radarr_config is None
                     or (radarr_request is not None and not retryable)

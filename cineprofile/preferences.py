@@ -239,7 +239,7 @@ def record_radarr_download(
               tmdb_id, imdb_id, title, radarr_movie_id, status, payload_json,
               radarr_state, status_detail, progress, status_checked_at,
               requested_at, updated_at
-            ) VALUES (?, ?, ?, ?, 'downloaded', ?, 'sent', NULL, NULL, NULL, ?, ?)
+            ) VALUES (?, ?, ?, ?, 'downloaded', ?, 'monitored', NULL, NULL, NULL, ?, ?)
             ON CONFLICT(tmdb_id) DO UPDATE SET
               imdb_id=excluded.imdb_id,
               title=excluded.title,
@@ -248,7 +248,7 @@ def record_radarr_download(
               ),
               status='downloaded',
               payload_json=excluded.payload_json,
-              radarr_state='sent',
+              radarr_state='monitored',
               status_detail=NULL,
               progress=NULL,
               status_checked_at=NULL,
@@ -293,6 +293,63 @@ def update_radarr_states(
                     state.get("progress"),
                     now,
                     int(tmdb_id),
+                ),
+            )
+
+
+def upsert_radarr_catalog_entries(
+    items: list[dict],
+    states: dict[int, dict],
+    database: str | Path | None = None,
+) -> None:
+    """Keep Radarr-owned recommendations in Ma liste without faking a request.
+
+    A film can already exist in Radarr even when it was added outside
+    CineProfile.  This durable snapshot lets the UI remove it from Suggestions
+    while retaining its card and honest Radarr state in Ma liste.
+    """
+    if not items or not states:
+        return
+    initialize(database)
+    by_tmdb = {int(item["tmdb_id"]): item for item in items}
+    now = datetime.now(UTC).isoformat()
+    with transaction(database) as connection:
+        for tmdb_id, state in states.items():
+            item = by_tmdb.get(int(tmdb_id))
+            if item is None:
+                continue
+            connection.execute(
+                """
+                INSERT INTO radarr_requests(
+                  tmdb_id, imdb_id, title, radarr_movie_id, status,
+                  payload_json, radarr_state, status_detail, progress,
+                  status_checked_at, requested_at, updated_at
+                ) VALUES (?, ?, ?, ?, 'downloaded', ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(tmdb_id) DO UPDATE SET
+                  imdb_id=COALESCE(excluded.imdb_id, radarr_requests.imdb_id),
+                  title=excluded.title,
+                  radarr_movie_id=COALESCE(
+                    excluded.radarr_movie_id, radarr_requests.radarr_movie_id
+                  ),
+                  payload_json=excluded.payload_json,
+                  radarr_state=excluded.radarr_state,
+                  status_detail=excluded.status_detail,
+                  progress=excluded.progress,
+                  status_checked_at=excluded.status_checked_at,
+                  updated_at=excluded.updated_at
+                """,
+                (
+                    int(tmdb_id),
+                    item.get("imdb_id"),
+                    str(item.get("title") or f"TMDB {tmdb_id}"),
+                    state.get("radarr_movie_id"),
+                    json.dumps(item, ensure_ascii=False),
+                    str(state["state"]),
+                    state.get("detail"),
+                    state.get("progress"),
+                    now,
+                    now,
+                    now,
                 ),
             )
 
